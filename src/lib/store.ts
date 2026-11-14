@@ -17,10 +17,22 @@ export interface StreamFrame {
   timestamp: number;
 }
 
+export interface InputEvent {
+  id: string;
+  workerId: string;
+  eventType: "click" | "type" | "key";
+  xRatio?: number;
+  yRatio?: number;
+  text?: string;
+  key?: string;
+  timestamp: number;
+}
+
 // Global in-memory storage across API routes on warm serverless instances
 interface GlobalRelayStore {
   workers: Map<string, WorkerInfo>;
   frames: Map<string, StreamFrame>;
+  inputs: Map<string, InputEvent[]>;
 }
 
 declare global {
@@ -32,6 +44,7 @@ if (!global.__relayStore) {
   global.__relayStore = {
     workers: new Map<string, WorkerInfo>(),
     frames: new Map<string, StreamFrame>(),
+    inputs: new Map<string, InputEvent[]>(),
   };
 }
 
@@ -74,10 +87,10 @@ export function getActiveWorkers(timeoutMs = 12000): WorkerInfo[] {
     if (now - worker.lastPing <= timeoutMs) {
       list.push(worker);
     } else {
-      // Auto-prune dead workers after 30s
       if (now - worker.lastPing > 30000) {
         store.workers.delete(id);
         store.frames.delete(id);
+        store.inputs.delete(id);
       }
     }
   }
@@ -120,4 +133,29 @@ export function setFrame(workerId: string, frameBase64: string): void {
 
 export function getFrame(workerId: string): StreamFrame | null {
   return store.frames.get(workerId) || null;
+}
+
+export function queueInputEvent(event: Omit<InputEvent, "id" | "timestamp">): InputEvent {
+  const inputEvent: InputEvent = {
+    ...event,
+    id: `inp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: Date.now(),
+  };
+
+  const queue = store.inputs.get(event.workerId) || [];
+  queue.push(inputEvent);
+  // Cap at 50 events max
+  if (queue.length > 50) queue.shift();
+  store.inputs.set(event.workerId, queue);
+
+  return inputEvent;
+}
+
+export function popInputEvents(workerId: string): InputEvent[] {
+  const queue = store.inputs.get(workerId) || [];
+  if (queue.length === 0) return [];
+
+  // Clear queue and return dequeued events
+  store.inputs.set(workerId, []);
+  return queue;
 }

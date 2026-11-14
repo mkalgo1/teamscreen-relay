@@ -1,6 +1,10 @@
 """
 Executive Screen Relay - CEO Admin Command Center
-Enhanced with Session Video Recording (MP4) and Assisted Remote Input & Credential Injection.
+Enhanced with:
+1. Pixel-Perfect DPI-Aware Remote Mouse Clicking
+2. Remote File Explorer & Direct Invoice/File Transfer Manager
+3. Live Session Video Recording (MP4)
+4. Masked Password & Keystroke Injection
 """
 
 import sys
@@ -10,6 +14,7 @@ import json
 import base64
 import tempfile
 import threading
+import tkinter as tk
 from io import BytesIO
 import urllib.request
 import urllib.error
@@ -31,8 +36,8 @@ class CEOAdminApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         self.title("CEO Command Center // TeamScreen Relay")
-        self.geometry("1260x820")
-        self.minsize(1020, 680)
+        self.geometry("1300x840")
+        self.minsize(1040, 700)
 
         # State Variables
         self.relay_url = DEFAULT_RELAY_URL
@@ -53,11 +58,15 @@ class CEOAdminApp(ctk.CTk):
         self.temp_record_path = None
         self.record_frame_size = None
 
-        # Remote Input State
+        # Precision Remote Input State
         self.remote_input_enabled = False
-        self.canvas_actual_width = 800
-        self.canvas_actual_height = 500
-        self.image_display_rect = (0, 0, 800, 500) # (x_offset, y_offset, w, h)
+        self.image_display_rect = (0, 0, 800, 500) # ox, oy, nw, nh
+
+        # Remote File Manager State
+        self.active_view = "stream" # "stream" or "files"
+        self.worker_current_path = ""
+        self.worker_files = []
+        self.last_file_sync_time = 0
 
         # Load config
         self.load_config()
@@ -65,8 +74,9 @@ class CEOAdminApp(ctk.CTk):
         # Build UI
         self.setup_ui()
 
-        # Launch Worker Discovery Background Loop
+        # Launch Background Loops
         threading.Thread(target=self.worker_discovery_loop, daemon=True).start()
+        threading.Thread(target=self.file_result_poll_loop, daemon=True).start()
 
     def load_config(self):
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_FILE)
@@ -92,7 +102,7 @@ class CEOAdminApp(ctk.CTk):
         header.pack(fill="x", side="top")
 
         title_box = ctk.CTkFrame(header, fg_color="transparent")
-        title_box.pack(side="left", padx=24, pady=12)
+        title_box.pack(side="left", padx=20, pady=12)
 
         title = ctk.CTkLabel(
             title_box,
@@ -104,7 +114,7 @@ class CEOAdminApp(ctk.CTk):
 
         subtitle = ctk.CTkLabel(
             title_box,
-            text="Executive Remote Assistance, Recording & Guidance Hub",
+            text="Executive Observation, Precision Input & File Transfer Hub",
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color="#94A3B8"
         )
@@ -112,12 +122,12 @@ class CEOAdminApp(ctk.CTk):
 
         # Relay URL configuration bar on top right
         config_box = ctk.CTkFrame(header, fg_color="transparent")
-        config_box.pack(side="right", padx=24, pady=12)
+        config_box.pack(side="right", padx=20, pady=12)
 
         self.url_entry = ctk.CTkEntry(
             config_box,
             placeholder_text="Vercel Relay URL",
-            width=300,
+            width=280,
             fg_color="#1E293B",
             border_color="#334155"
         )
@@ -127,7 +137,7 @@ class CEOAdminApp(ctk.CTk):
         apply_btn = ctk.CTkButton(
             config_box,
             text="Save URL",
-            width=80,
+            width=76,
             fg_color="#3B82F6",
             hover_color="#2563EB",
             command=self.apply_url
@@ -139,7 +149,7 @@ class CEOAdminApp(ctk.CTk):
         main_container.pack(fill="both", expand=True)
 
         # Left Sidebar (Workers Fleet)
-        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=330, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=320, corner_radius=0)
         self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
         self.sidebar.pack_propagate(False)
 
@@ -148,7 +158,7 @@ class CEOAdminApp(ctk.CTk):
 
         fleet_label = ctk.CTkLabel(
             sidebar_header,
-            text="ACTIVE WORKERS",
+            text="ACTIVE FLEET",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             text_color="#CBD5E1"
         )
@@ -175,11 +185,11 @@ class CEOAdminApp(ctk.CTk):
         self.workers_list_frame = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
         self.workers_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 12))
 
-        # Right Main Viewport
+        # Right Main Viewport Area
         self.viewport_container = ctk.CTkFrame(main_container, fg_color="#090D16", corner_radius=0)
         self.viewport_container.pack(side="right", fill="both", expand=True)
 
-        # Viewport Header (Active Session Info & Recording / Input controls)
+        # Viewport Header
         self.vp_header = ctk.CTkFrame(self.viewport_container, fg_color="#131B2E", height=58, corner_radius=0)
         self.vp_header.pack(fill="x", side="top")
 
@@ -189,7 +199,7 @@ class CEOAdminApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
             text_color="#94A3B8"
         )
-        self.vp_title.pack(side="left", padx=18, pady=12)
+        self.vp_title.pack(side="left", padx=16, pady=12)
 
         self.vp_stats = ctk.CTkLabel(
             self.vp_header,
@@ -197,11 +207,23 @@ class CEOAdminApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color="#64748B"
         )
-        self.vp_stats.pack(side="left", padx=8)
+        self.vp_stats.pack(side="left", padx=6)
 
         # Controls Container
         self.controls_box = ctk.CTkFrame(self.vp_header, fg_color="transparent")
-        self.controls_box.pack(side="right", padx=16)
+        self.controls_box.pack(side="right", padx=14)
+
+        # Toggle File Manager View Button
+        self.files_toggle_btn = ctk.CTkButton(
+            self.controls_box,
+            text="📁 Remote Files",
+            fg_color="#1E293B",
+            hover_color="#334155",
+            width=120,
+            command=self.toggle_files_view
+        )
+        self.files_toggle_btn.pack(side="left", padx=3)
+        self.files_toggle_btn.configure(state="disabled")
 
         # Remote Input Toggle Button
         self.input_toggle_btn = ctk.CTkButton(
@@ -209,22 +231,22 @@ class CEOAdminApp(ctk.CTk):
             text="🖱️ Remote Input: OFF",
             fg_color="#334155",
             hover_color="#475569",
-            width=140,
+            width=135,
             command=self.toggle_remote_input
         )
-        self.input_toggle_btn.pack(side="left", padx=4)
+        self.input_toggle_btn.pack(side="left", padx=3)
         self.input_toggle_btn.configure(state="disabled")
 
         # Record Session Button
         self.record_btn = ctk.CTkButton(
             self.controls_box,
-            text="⏺️ Record Session",
+            text="⏺️ Record MP4",
             fg_color="#7C2D12",
             hover_color="#991B1B",
-            width=130,
+            width=115,
             command=self.toggle_recording
         )
-        self.record_btn.pack(side="left", padx=4)
+        self.record_btn.pack(side="left", padx=3)
         self.record_btn.configure(state="disabled")
 
         # Stream Toggle Button
@@ -233,29 +255,83 @@ class CEOAdminApp(ctk.CTk):
             text="START STREAM",
             fg_color="#10B981",
             hover_color="#059669",
-            width=110,
+            width=105,
             command=self.toggle_stream_session
         )
-        self.stream_toggle_btn.pack(side="left", padx=4)
+        self.stream_toggle_btn.pack(side="left", padx=3)
         self.stream_toggle_btn.configure(state="disabled")
 
-        # Screen Display Canvas / Area
-        self.canvas_frame = ctk.CTkFrame(self.viewport_container, fg_color="#030712", corner_radius=8)
-        self.canvas_frame.pack(fill="both", expand=True, padx=14, pady=(10, 6))
+        # Central Switchable Container: Stream View vs File Explorer View
+        self.center_area = ctk.CTkFrame(self.viewport_container, fg_color="transparent", corner_radius=0)
+        self.center_area.pack(fill="both", expand=True, padx=12, pady=6)
 
-        self.screen_label = ctk.CTkLabel(
+        # --- STREAM VIEW WIDGETS ---
+        self.stream_view_frame = ctk.CTkFrame(self.center_area, fg_color="transparent")
+        self.stream_view_frame.pack(fill="both", expand=True)
+
+        self.canvas_frame = ctk.CTkFrame(self.stream_view_frame, fg_color="#030712", corner_radius=8)
+        self.canvas_frame.pack(fill="both", expand=True)
+
+        # Precision Native Canvas for pixel-perfect click coordinate capture
+        self.screen_canvas = tk.Canvas(
             self.canvas_frame,
-            text="Select an active worker on the left panel to begin live observation.",
-            font=ctk.CTkFont(family="Segoe UI", size=14),
-            text_color="#475569"
+            bg="#030712",
+            highlightthickness=0,
+            cursor=""
         )
-        self.screen_label.pack(fill="both", expand=True)
-        # Bind mouse click for remote assisted input
-        self.screen_label.bind("<Button-1>", self.on_canvas_click)
+        self.screen_canvas.pack(fill="both", expand=True)
+        self.screen_canvas.bind("<Button-1>", self.on_canvas_click)
 
+        # Initial placeholder text
+        self.canvas_placeholder = self.screen_canvas.create_text(
+            400, 250,
+            text="Select an active worker on the left to begin live observation.",
+            fill="#475569",
+            font=("Segoe UI", 13)
+        )
+
+        # --- REMOTE FILE EXPLORER VIEW WIDGETS ---
+        self.file_view_frame = ctk.CTkFrame(self.center_area, fg_color="#0F172A", corner_radius=8)
+        # Not packed initially
+
+        # File Manager Top Navigation Bar
+        fm_navbar = ctk.CTkFrame(self.file_view_frame, fg_color="#1E293B", height=46, corner_radius=6)
+        fm_navbar.pack(fill="x", padx=12, pady=(12, 6))
+
+        up_btn = ctk.CTkButton(fm_navbar, text="⬆️ Up", width=65, fg_color="#334155", hover_color="#475569", command=self.navigate_up_folder)
+        up_btn.pack(side="left", padx=6)
+
+        refresh_fm_btn = ctk.CTkButton(fm_navbar, text="🔄 Refresh", width=80, fg_color="#334155", hover_color="#475569", command=self.refresh_current_folder)
+        refresh_fm_btn.pack(side="left", padx=4)
+
+        # Path display entry
+        self.fm_path_entry = ctk.CTkEntry(fm_navbar, fg_color="#0F172A", border_color="#334155")
+        self.fm_path_entry.pack(side="left", fill="x", expand=True, padx=6)
+        self.fm_path_entry.bind("<Return>", lambda e: self.request_browse_folder(self.fm_path_entry.get().strip()))
+
+        # Shortcuts: Desktop, Documents, Downloads
+        desktop_btn = ctk.CTkButton(fm_navbar, text="Desktop", width=70, fg_color="#2563EB", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("DEFAULT"))
+        desktop_btn.pack(side="left", padx=4)
+
+        # Upload / Send Invoice button
+        send_file_btn = ctk.CTkButton(
+            fm_navbar,
+            text="📤 Send File / Invoice",
+            fg_color="#10B981",
+            hover_color="#059669",
+            width=150,
+            command=self.send_file_to_worker
+        )
+        send_file_btn.pack(side="left", padx=(4, 6))
+
+        # Files list scrollable table
+        self.files_scroll = ctk.CTkScrollableFrame(self.file_view_frame, fg_color="#090D16")
+        self.files_scroll.pack(fill="both", expand=True, padx=12, pady=(6, 12))
+
+        # --- BOTTOM ACTION BARS ---
         # Assisted Credential & Remote Keystroke Console
-        input_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=50, corner_radius=6)
-        input_bar.pack(fill="x", side="bottom", padx=14, pady=(0, 6))
+        input_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=48, corner_radius=6)
+        input_bar.pack(fill="x", side="bottom", padx=12, pady=(0, 6))
 
         input_title = ctk.CTkLabel(
             input_bar,
@@ -265,7 +341,6 @@ class CEOAdminApp(ctk.CTk):
         )
         input_title.pack(side="left", padx=(12, 6))
 
-        # Password mask toggle checkbox
         self.mask_var = ctk.BooleanVar(value=True)
         self.mask_checkbox = ctk.CTkCheckBox(
             input_bar,
@@ -278,15 +353,14 @@ class CEOAdminApp(ctk.CTk):
         )
         self.mask_checkbox.pack(side="left", padx=(0, 8))
 
-        # Text/Password input
         self.key_input = ctk.CTkEntry(
             input_bar,
-            placeholder_text="Enter secret password or text to type into worker's focused window...",
+            placeholder_text="Enter password or text to type into worker's focused window...",
             show="*",
             fg_color="#1E293B",
             border_color="#334155"
         )
-        self.key_input.pack(side="left", fill="x", expand=True, padx=6, pady=8)
+        self.key_input.pack(side="left", fill="x", expand=True, padx=6, pady=7)
         self.key_input.bind("<Return>", lambda e: self.send_remote_text())
 
         type_btn = ctk.CTkButton(
@@ -299,7 +373,6 @@ class CEOAdminApp(ctk.CTk):
         )
         type_btn.pack(side="left", padx=4)
 
-        # Quick special keys
         enter_btn = ctk.CTkButton(input_bar, text="[Enter]", width=55, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("enter"))
         enter_btn.pack(side="left", padx=2)
         tab_btn = ctk.CTkButton(input_bar, text="[Tab]", width=50, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("tab"))
@@ -308,8 +381,8 @@ class CEOAdminApp(ctk.CTk):
         esc_btn.pack(side="left", padx=(2, 10))
 
         # Bottom CEO Guidance Console
-        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=46, corner_radius=6)
-        guidance_bar.pack(fill="x", side="bottom", padx=14, pady=(0, 10))
+        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=44, corner_radius=6)
+        guidance_bar.pack(fill="x", side="bottom", padx=12, pady=(0, 10))
 
         guidance_label = ctk.CTkLabel(
             guidance_bar,
@@ -338,6 +411,21 @@ class CEOAdminApp(ctk.CTk):
         )
         send_btn.pack(side="right", padx=(0, 10))
 
+    def toggle_files_view(self):
+        if self.active_view == "stream":
+            self.active_view = "files"
+            self.stream_view_frame.pack_forget()
+            self.file_view_frame.pack(fill="both", expand=True)
+            self.files_toggle_btn.configure(text="📺 Live Screen", fg_color="#3B82F6", hover_color="#2563EB")
+            # Request initial folder
+            if not self.worker_current_path:
+                self.request_browse_folder("DEFAULT")
+        else:
+            self.active_view = "stream"
+            self.file_view_frame.pack_forget()
+            self.stream_view_frame.pack(fill="both", expand=True)
+            self.files_toggle_btn.configure(text="📁 Remote Files", fg_color="#1E293B", hover_color="#334155")
+
     def toggle_password_mask(self):
         if self.mask_var.get():
             self.key_input.configure(show="*")
@@ -356,7 +444,7 @@ class CEOAdminApp(ctk.CTk):
                 workers_url = f"{self.relay_url}/api/workers"
                 req = urllib.request.Request(
                     workers_url,
-                    headers={"User-Agent": "CEOAdmin/2.0"},
+                    headers={"User-Agent": "CEOAdmin/2.1"},
                     method="GET"
                 )
                 with urllib.request.urlopen(req, timeout=3) as resp:
@@ -465,6 +553,7 @@ class CEOAdminApp(ctk.CTk):
             self.stream_toggle_btn.configure(state="normal")
             self.record_btn.configure(state="normal")
             self.input_toggle_btn.configure(state="normal")
+            self.files_toggle_btn.configure(state="normal")
 
             self.start_stream_session()
 
@@ -530,7 +619,7 @@ class CEOAdminApp(ctk.CTk):
         self.record_start_time = time.time()
 
         self.record_btn.configure(
-            text="⏹️ Stop & Save Video",
+            text="⏹️ Stop & Save",
             fg_color="#DC2626",
             hover_color="#B91C1C"
         )
@@ -548,7 +637,6 @@ class CEOAdminApp(ctk.CTk):
     def write_frame_to_video(self, cv_frame):
         if not self.is_recording:
             return
-
         h, w = cv_frame.shape[:2]
         if self.video_writer is None:
             self.record_frame_size = (w, h)
@@ -561,7 +649,7 @@ class CEOAdminApp(ctk.CTk):
     def stop_recording_and_save(self):
         self.is_recording = False
         self.record_btn.configure(
-            text="⏺️ Record Session",
+            text="⏺️ Record MP4",
             fg_color="#7C2D12",
             hover_color="#991B1B"
         )
@@ -593,7 +681,7 @@ class CEOAdminApp(ctk.CTk):
 
         self.vp_stats.configure(text="")
 
-    # --- Feature 2: Assisted Remote Input & Credential Injection ---
+    # --- Feature 2: Precision DPI-Aware Remote Mouse Clicking ---
     def toggle_remote_input(self):
         self.remote_input_enabled = not self.remote_input_enabled
         if self.remote_input_enabled:
@@ -602,27 +690,35 @@ class CEOAdminApp(ctk.CTk):
                 fg_color="#9333EA",
                 hover_color="#7E22CE"
             )
-            self.screen_label.configure(cursor="crosshair")
+            self.screen_canvas.configure(cursor="crosshair")
         else:
             self.input_toggle_btn.configure(
                 text="🖱️ Remote Input: OFF",
                 fg_color="#334155",
                 hover_color="#475569"
             )
-            self.screen_label.configure(cursor="")
+            self.screen_canvas.configure(cursor="")
 
     def on_canvas_click(self, event):
         if not self.remote_input_enabled or not self.selected_worker_id:
             return
 
-        # Calculate click position relative to the displayed screen image
         ox, oy, dw, dh = self.image_display_rect
         cx = event.x - ox
         cy = event.y - oy
 
+        # Verify click falls strictly inside the rendered screen image bounds
         if 0 <= cx <= dw and 0 <= cy <= dh and dw > 0 and dh > 0:
-            x_ratio = cx / dw
-            y_ratio = cy / dh
+            x_ratio = cx / float(dw)
+            y_ratio = cy / float(dh)
+
+            # Draw visual click ripple indicator on canvas
+            self.screen_canvas.create_oval(
+                event.x - 6, event.y - 6, event.x + 6, event.y + 6,
+                outline="#A855F7", width=2, tags="click_ripple"
+            )
+            self.after(300, lambda: self.screen_canvas.delete("click_ripple"))
+
             self.dispatch_remote_input("click", xRatio=x_ratio, yRatio=y_ratio)
 
     def send_remote_text(self):
@@ -665,6 +761,147 @@ class CEOAdminApp(ctk.CTk):
         except Exception:
             pass
 
+    # --- Feature 3: Remote File Explorer & Direct File Transfer ---
+    def request_browse_folder(self, folder_path):
+        if not self.selected_worker_id:
+            return
+        payload = {
+            "workerId": self.selected_worker_id,
+            "action": "list",
+            "path": folder_path
+        }
+        threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
+    def refresh_current_folder(self):
+        curr = self.fm_path_entry.get().strip() or self.worker_current_path or "DEFAULT"
+        self.request_browse_folder(curr)
+
+    def navigate_up_folder(self):
+        curr = self.worker_current_path
+        if curr:
+            parent = os.path.dirname(curr)
+            if parent and parent != curr:
+                self.request_browse_folder(parent)
+
+    def send_file_to_worker(self):
+        if not self.selected_worker_id:
+            messagebox.showinfo("Select Worker", "Please select an active worker first.")
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="Select File / Invoice to Send to Worker",
+            filetypes=[
+                ("Invoices & Documents", "*.pdf;*.docx;*.xlsx;*.txt;*.png;*.jpg"),
+                ("All Files", "*.*")
+            ]
+        )
+
+        if not file_path:
+            return
+
+        file_name = os.path.basename(file_path)
+        target_dir = self.worker_current_path or "DEFAULT"
+
+        try:
+            with open(file_path, "rb") as f:
+                b64_content = base64.b64encode(f.read()).decode("ascii")
+
+            payload = {
+                "workerId": self.selected_worker_id,
+                "action": "upload",
+                "path": target_dir,
+                "fileName": file_name,
+                "fileData": b64_content
+            }
+            threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+            messagebox.showinfo("Sending File", f"File '{file_name}' is being transmitted to worker's folder:\n{target_dir}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read file: {e}")
+
+    def _post_file_command(self, payload):
+        try:
+            url = f"{self.relay_url}/api/files/command"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=4):
+                pass
+        except Exception:
+            pass
+
+    def file_result_poll_loop(self):
+        """Polls for folder listings and upload confirmations from worker"""
+        while not self.stop_event.is_set():
+            if self.active_view == "files" and self.selected_worker_id:
+                try:
+                    url = f"{self.relay_url}/api/files/result?workerId={self.selected_worker_id}"
+                    req = urllib.request.Request(url, headers={"User-Agent": "CEOAdmin/2.1"})
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        if data.get("ok"):
+                            res = data.get("result", {})
+                            cur_path = res.get("currentPath", "")
+                            items = res.get("items", [])
+                            ts = res.get("timestamp", 0)
+
+                            if ts > self.last_file_sync_time:
+                                self.last_file_sync_time = ts
+                                self.after(0, self.update_files_ui, cur_path, items)
+                except Exception:
+                    pass
+            time.sleep(1.2)
+
+    def update_files_ui(self, current_path, items):
+        self.worker_current_path = current_path
+        self.fm_path_entry.delete(0, "end")
+        self.fm_path_entry.insert(0, current_path)
+
+        for widget in self.files_scroll.winfo_children():
+            widget.destroy()
+
+        if not items:
+            empty_lbl = ctk.CTkLabel(
+                self.files_scroll,
+                text="Directory is empty or awaiting worker response.",
+                font=ctk.CTkFont(size=12),
+                text_color="#64748B"
+            )
+            empty_lbl.pack(pady=40)
+            return
+
+        for item in items:
+            name = item.get("name")
+            is_dir = item.get("isDir", False)
+            size_bytes = item.get("size", 0)
+
+            size_str = f"{size_bytes / 1024:.1f} KB" if size_bytes > 0 else "<dir>"
+            icon = "📁" if is_dir else "📄"
+
+            row = ctk.CTkFrame(self.files_scroll, fg_color="#1E293B", corner_radius=6)
+            row.pack(fill="x", pady=2, padx=4)
+
+            btn_text = f"{icon}  {name}"
+            lbl = ctk.CTkLabel(
+                row,
+                text=btn_text,
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold" if is_dir else "normal"),
+                text_color="#F8FAFC" if is_dir else "#CBD5E1",
+                cursor="hand2" if is_dir else ""
+            )
+            lbl.pack(side="left", padx=10, pady=8)
+
+            if is_dir:
+                # Double click to enter folder
+                sub_path = os.path.join(current_path, name)
+                lbl.bind("<Double-Button-1>", lambda e, p=sub_path: self.request_browse_folder(p))
+                row.bind("<Double-Button-1>", lambda e, p=sub_path: self.request_browse_folder(p))
+
+            size_lbl = ctk.CTkLabel(row, text=size_str, font=ctk.CTkFont(size=11), text_color="#64748B")
+            size_lbl.pack(side="right", padx=12)
+
     def send_guidance(self):
         instruction = self.guidance_input.get().strip()
         if not instruction or not self.selected_worker_id:
@@ -694,7 +931,7 @@ class CEOAdminApp(ctk.CTk):
                 continue
             try:
                 frame_url = f"{self.relay_url}/api/stream/frame?workerId={self.selected_worker_id}"
-                req = urllib.request.Request(frame_url, headers={"User-Agent": "CEOAdmin/2.0"})
+                req = urllib.request.Request(frame_url, headers={"User-Agent": "CEOAdmin/2.1"})
                 with urllib.request.urlopen(req, timeout=2) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     b64_frame = data.get("frame")
@@ -702,7 +939,6 @@ class CEOAdminApp(ctk.CTk):
                         img_bytes = base64.b64decode(b64_frame)
                         img = Image.open(BytesIO(img_bytes))
 
-                        # Convert to OpenCV image for recording
                         cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
                         self.latest_cv_frame = cv_img
 
@@ -723,32 +959,36 @@ class CEOAdminApp(ctk.CTk):
                 time.sleep(0.2)
 
     def display_frame(self, img):
-        cw = max(400, self.canvas_frame.winfo_width())
-        ch = max(300, self.canvas_frame.winfo_height())
+        if self.active_view != "stream":
+            return
 
-        img_ratio = img.width / img.height
-        canvas_ratio = cw / ch
+        cw = max(400, self.screen_canvas.winfo_width())
+        ch = max(300, self.screen_canvas.winfo_height())
+
+        img_ratio = img.width / float(img.height)
+        canvas_ratio = cw / float(ch)
 
         if canvas_ratio > img_ratio:
-            nh = ch - 8
+            nh = ch - 6
             nw = int(nh * img_ratio)
         else:
-            nw = cw - 8
+            nw = cw - 6
             nh = int(nw / img_ratio)
 
         nw = max(10, nw)
         nh = max(10, nh)
 
-        # Store image display rectangle for mouse coordinate mapping
+        # Precision centered offset
         ox = (cw - nw) // 2
         oy = (ch - nh) // 2
         self.image_display_rect = (ox, oy, nw, nh)
 
         resized = img.resize((nw, nh), Image.Resampling.BILINEAR)
-        photo = ctk.CTkImage(light_image=resized, dark_image=resized, size=(nw, nh))
-
+        photo = ImageTk.PhotoImage(resized)
         self.current_photo = photo
-        self.screen_label.configure(image=photo, text="")
+
+        self.screen_canvas.delete("all")
+        self.screen_canvas.create_image(ox, oy, anchor="nw", image=photo)
 
     def on_closing(self):
         if self.is_recording:

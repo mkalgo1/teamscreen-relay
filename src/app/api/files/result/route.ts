@@ -1,21 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { setFileResult, getFileResult } from "@/lib/store";
 
-// Worker posts directory listing or upload confirmation
+// Worker posts directory listing, download data, or operation confirmation
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { workerId, currentPath, items, statusMessage } = body;
+    const { workerId, action, currentPath, items, fileName, fileData, statusMessage, success } = body;
 
-    if (!workerId || !currentPath) {
-      return NextResponse.json({ error: "workerId and currentPath required" }, { status: 400 });
+    if (!workerId) {
+      return NextResponse.json({ error: "workerId required" }, { status: 400 });
     }
 
     setFileResult({
       workerId,
-      currentPath,
+      action: typeof action === "string" ? action : undefined,
+      currentPath: typeof currentPath === "string" ? currentPath : "",
       items: Array.isArray(items) ? items : [],
+      fileName: typeof fileName === "string" ? fileName : undefined,
+      fileData: typeof fileData === "string" ? fileData : undefined,
       statusMessage: typeof statusMessage === "string" ? statusMessage : undefined,
+      success: typeof success === "boolean" ? success : true,
       timestamp: Date.now(),
     });
 

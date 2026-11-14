@@ -1,6 +1,7 @@
 """
-TeamScreen Relay - Background Worker Agent
-Precision DPI-aware mouse clicking, real-time screen streaming, and remote file transfer manager.
+TeamScreen Relay - Background Worker Agent (High Performance v3.0)
+Ultra-low latency screen capture, DPI-aware precision mouse input,
+and full remote folder & file management (browse, upload, download, launch, delete).
 """
 
 import sys
@@ -10,11 +11,10 @@ import json
 import socket
 import base64
 import threading
+import shutil
 from io import BytesIO
-import urllib.request
-import urllib.error
 
-# Set DPI Awareness before importing UI/capture tools for pixel-perfect coordinates
+# Set DPI Awareness before importing capture tools for pixel-perfect coordinates
 try:
     import ctypes
     ctypes.windll.shcore.SetProcessDpiAwareness(2) # Per-monitor DPI aware
@@ -30,6 +30,9 @@ import mss
 import pyautogui
 import win32api
 import win32con
+import cv2
+import numpy as np
+import requests
 
 pyautogui.FAILSAFE = False
 
@@ -57,6 +60,12 @@ class BackgroundWorkerAgent:
         self.mon_width = 1920
         self.mon_height = 1080
         self.detect_monitor_bounds()
+
+        # Reusable HTTP Session with Keep-Alive connection pooling
+        self.http_session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
+        self.http_session.mount("https://", adapter)
+        self.http_session.mount("http://", adapter)
 
         # Tray Icon Handle
         self.tray_icon = None
@@ -103,7 +112,7 @@ class BackgroundWorkerAgent:
             dot_color = (56, 189, 248)
             glow_color = (14, 165, 233, 100)
         elif state == "transfer":
-            dot_color = (234, 179, 8) # Yellow file transfer
+            dot_color = (234, 179, 8)
             glow_color = (202, 138, 4, 100)
         elif state == "connected":
             dot_color = (16, 185, 129)
@@ -139,16 +148,15 @@ class BackgroundWorkerAgent:
             }
 
             try:
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(
-                    ping_url,
-                    data=data,
-                    headers={"Content-Type": "application/json", "User-Agent": "TeamScreenWorkerAgent/2.1"},
-                    method="POST"
-                )
                 t0 = time.time()
-                with urllib.request.urlopen(req, timeout=4) as response:
-                    res = json.loads(response.read().decode("utf-8"))
+                resp = self.http_session.post(
+                    ping_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json", "User-Agent": "TeamScreenWorkerAgent/3.0"},
+                    timeout=3
+                )
+                if resp.status_code == 200:
+                    res = resp.json()
                     self.last_ping_ms = int((time.time() - t0) * 1000)
                     self.is_connected = True
 
@@ -169,16 +177,19 @@ class BackgroundWorkerAgent:
                             self.tray_icon.notify(guidance, title="CEO Guidance Instruction")
                         except Exception:
                             pass
-
             except Exception:
                 self.is_connected = False
                 self.update_tray_state("idle", "Reconnecting to Relay...")
 
-            time.sleep(2.0)
+            time.sleep(1.8)
 
     def stream_loop(self):
+        """Ultra-fast SIMD OpenCV screen capture and streaming loop"""
         relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
         frame_url = f"{relay_url}/api/stream/frame"
+
+        prev_thumb = None
+        last_sent_time = 0
 
         with mss.mss() as sct:
             monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
@@ -189,41 +200,64 @@ class BackgroundWorkerAgent:
 
             while self.is_running:
                 if not self.is_streaming:
-                    time.sleep(0.2)
+                    time.sleep(0.15)
+                    prev_thumb = None
                     continue
 
                 try:
                     t0 = time.time()
                     sct_img = sct.grab(monitor)
-                    img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                    
+                    # Direct numpy view from BGRA memory (zero-copy)
+                    raw_bgra = np.frombuffer(sct_img.raw, dtype=np.uint8).reshape((sct_img.height, sct_img.width, 4))
+                    bgr_frame = raw_bgra[:, :, :3]
 
+                    # Fast downsampled thumbnail to check for screen motion
+                    thumb = cv2.resize(bgr_frame, (160, 90), interpolation=cv2.INTER_NEAREST)
+                    has_motion = True
+                    if prev_thumb is not None:
+                        diff = np.mean(np.abs(thumb.astype(np.float32) - prev_thumb.astype(np.float32)))
+                        # If difference is negligible (<0.4%) and sent recently, skip frame
+                        if diff < 0.4 and (t0 - last_sent_time) < 1.0:
+                            has_motion = False
+
+                    if not has_motion:
+                        time.sleep(0.04)
+                        continue
+
+                    prev_thumb = thumb
+                    last_sent_time = t0
+
+                    # Resize to optimal streaming resolution (1280px wide) with high speed
                     target_w = 1280
-                    target_h = int(img.height * (1280 / img.width))
-                    img = img.resize((target_w, target_h), Image.Resampling.BILINEAR)
+                    target_h = int(sct_img.height * (1280 / sct_img.width))
+                    scaled_frame = cv2.resize(bgr_frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-                    buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=68, optimize=True)
-                    b64_frame = base64.b64encode(buffer.getvalue()).decode("ascii")
+                    # SIMD JPEG encoding with quality 58 (crisp text, low bandwidth, ~2ms encoding)
+                    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 58]
+                    _, enc_jpg = cv2.imencode(".jpg", scaled_frame, encode_params)
+                    b64_frame = base64.b64encode(enc_jpg.tobytes()).decode("ascii")
 
                     payload = {
                         "workerId": self.worker_id,
                         "frame": b64_frame,
-                        "timestamp": int(time.time() * 1000)
+                        "timestamp": int(t0 * 1000)
                     }
-                    data = json.dumps(payload).encode("utf-8")
-                    req = urllib.request.Request(
+
+                    self.http_session.post(
                         frame_url,
-                        data=data,
+                        json=payload,
                         headers={"Content-Type": "application/json"},
-                        method="POST"
+                        timeout=2.0
                     )
-                    with urllib.request.urlopen(req, timeout=3):
-                        pass
 
                     elapsed = time.time() - t0
-                    time.sleep(max(0.04, 0.05 - elapsed))
+                    # Aim for smooth 20-25 FPS with dynamic throttle
+                    sleep_time = max(0.015, 0.045 - elapsed)
+                    time.sleep(sleep_time)
+
                 except Exception:
-                    time.sleep(0.4)
+                    time.sleep(0.3)
 
     def input_receiver_loop(self):
         """Precision DPI-Aware mouse click & keystroke execution"""
@@ -232,13 +266,13 @@ class BackgroundWorkerAgent:
 
         while self.is_running:
             if not self.is_streaming:
-                time.sleep(0.25)
+                time.sleep(0.2)
                 continue
 
             try:
-                req = urllib.request.Request(input_url, headers={"User-Agent": "TeamScreenWorkerAgent/2.1"})
-                with urllib.request.urlopen(req, timeout=2) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+                resp = self.http_session.get(input_url, timeout=2.0)
+                if resp.status_code == 200:
+                    data = resp.json()
                     events = data.get("events", [])
 
                     for ev in events:
@@ -249,7 +283,6 @@ class BackgroundWorkerAgent:
                             click_x = self.mon_left + int(xr * self.mon_width)
                             click_y = self.mon_top + int(yr * self.mon_height)
 
-                            # Win32 hardware mouse positioning & click
                             win32api.SetCursorPos((click_x, click_y))
                             win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, click_x, click_y, 0, 0)
                             time.sleep(0.02)
@@ -258,53 +291,70 @@ class BackgroundWorkerAgent:
                         elif ev_type == "type":
                             text = ev.get("text", "")
                             if text:
-                                pyautogui.write(text, interval=0.015)
+                                pyautogui.write(text, interval=0.01)
                         elif ev_type == "key":
                             key = ev.get("key", "")
                             if key:
                                 pyautogui.press(key)
 
-                time.sleep(0.1)
+                time.sleep(0.08)
             except Exception:
                 time.sleep(0.3)
 
-    # --- Feature 2: Remote File Explorer & Transfer Manager ---
+    # --- Comprehensive Remote File & Folder Manager ---
     def file_handler_loop(self):
-        """Listens for folder explore and file upload requests from CEO"""
+        """Listens for remote file commands: list, upload, download, launch, delete, mkdir"""
         relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
         cmd_url = f"{relay_url}/api/files/command?workerId={self.worker_id}"
         result_url = f"{relay_url}/api/files/result"
 
         while self.is_running:
             try:
-                req = urllib.request.Request(cmd_url, headers={"User-Agent": "TeamScreenWorkerAgent/2.1"})
-                with urllib.request.urlopen(req, timeout=2) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+                resp = self.http_session.get(cmd_url, timeout=2.0)
+                if resp.status_code == 200:
+                    data = resp.json()
                     commands = data.get("commands", [])
 
                     for cmd in commands:
                         action = cmd.get("action")
+                        req_path = cmd.get("path", "")
+                        file_name = cmd.get("fileName", "")
+                        file_data = cmd.get("fileData", "")
+
                         if action == "list":
-                            req_path = cmd.get("path", "")
                             self.handle_list_directory(req_path, result_url)
                         elif action == "upload":
-                            target_dir = cmd.get("path", "")
-                            file_name = cmd.get("fileName", "file.dat")
-                            b64_data = cmd.get("fileData", "")
-                            self.handle_upload_file(target_dir, file_name, b64_data, result_url)
+                            self.handle_upload_file(req_path, file_name, file_data, result_url)
+                        elif action == "download":
+                            self.handle_download_file(req_path, result_url)
+                        elif action == "launch":
+                            self.handle_launch_file(req_path, result_url)
+                        elif action == "delete":
+                            self.handle_delete_item(req_path, result_url)
+                        elif action == "mkdir":
+                            self.handle_make_directory(req_path, file_name, result_url)
 
-                time.sleep(0.5)
+                time.sleep(0.4)
             except Exception:
                 time.sleep(1.0)
 
-    def handle_list_directory(self, target_path, result_url):
-        # Resolve target directory or default to Desktop/Home
-        if not target_path or target_path == "DEFAULT":
-            target_path = os.path.join(os.path.expanduser("~"), "Desktop")
-            if not os.path.exists(target_path):
-                target_path = os.path.expanduser("~")
+    def resolve_path(self, target_path):
+        """Resolves friendly shortcuts like DEFAULT, DESKTOP, DOCUMENTS, DOWNLOADS"""
+        if not target_path or target_path in ("DEFAULT", "DESKTOP"):
+            p = os.path.join(os.path.expanduser("~"), "Desktop")
+            if not os.path.exists(p):
+                p = os.path.expanduser("~")
+            return p
+        elif target_path == "DOCUMENTS":
+            return os.path.join(os.path.expanduser("~"), "Documents")
+        elif target_path == "DOWNLOADS":
+            return os.path.join(os.path.expanduser("~"), "Downloads")
+        elif target_path in ("C:", "C:\\"):
+            return "C:\\"
+        return os.path.abspath(target_path)
 
-        target_path = os.path.abspath(target_path)
+    def handle_list_directory(self, target_path, result_url):
+        target_path = self.resolve_path(target_path)
         items = []
 
         try:
@@ -321,33 +371,32 @@ class BackgroundWorkerAgent:
                         })
                     except Exception:
                         pass
-            # Sort: folders first, then files alphabetically
             items.sort(key=lambda x: (not x["isDir"], x["name"].lower()))
+            status_msg = f"Directory scanned: {len(items)} items"
+            success = True
         except Exception as e:
             items = []
+            status_msg = f"Access error: {str(e)}"
+            success = False
 
         payload = {
             "workerId": self.worker_id,
+            "action": "list",
             "currentPath": target_path,
             "items": items,
-            "statusMessage": f"Directory scanned: {len(items)} items"
+            "statusMessage": status_msg,
+            "success": success
         }
 
         try:
-            req = urllib.request.Request(
-                result_url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=3):
-                pass
+            self.http_session.post(result_url, json=payload, timeout=3.0)
         except Exception:
             pass
 
     def handle_upload_file(self, target_dir, file_name, b64_data, result_url):
-        if not target_dir or not os.path.exists(target_dir):
-            target_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+        target_dir = self.resolve_path(target_dir)
+        if not os.path.exists(target_dir):
+            os.makedirs(target_dir, exist_ok=True)
 
         dest_file = os.path.join(target_dir, file_name)
 
@@ -357,12 +406,126 @@ class BackgroundWorkerAgent:
                 f.write(file_bytes)
 
             try:
-                self.tray_icon.notify(f"Received: {file_name}\nSaved to: {target_dir}", title="File Received from CEO")
+                self.tray_icon.notify(f"Received file: {file_name}\nSaved to: {dest_file}", title="File Received from CEO")
             except Exception:
                 pass
 
-            # Reply with refreshed folder contents
+            # Notify success and refresh directory
             self.handle_list_directory(target_dir, result_url)
+        except Exception as e:
+            payload = {
+                "workerId": self.worker_id,
+                "action": "upload",
+                "currentPath": target_dir,
+                "statusMessage": f"Upload failed: {str(e)}",
+                "success": False
+            }
+            try:
+                self.http_session.post(result_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+
+    def handle_download_file(self, file_path, result_url):
+        """Reads a file from worker PC and sends base64 content back to CEO"""
+        if not os.path.exists(file_path) or os.path.isdir(file_path):
+            payload = {
+                "workerId": self.worker_id,
+                "action": "download",
+                "currentPath": os.path.dirname(file_path),
+                "fileName": os.path.basename(file_path),
+                "statusMessage": "File not found or is a directory",
+                "success": False
+            }
+            try:
+                self.http_session.post(result_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+            return
+
+        try:
+            file_name = os.path.basename(file_path)
+            with open(file_path, "rb") as f:
+                b64_data = base64.b64encode(f.read()).decode("ascii")
+
+            payload = {
+                "workerId": self.worker_id,
+                "action": "download",
+                "currentPath": os.path.dirname(file_path),
+                "fileName": file_name,
+                "fileData": b64_data,
+                "statusMessage": f"File '{file_name}' successfully sent to CEO",
+                "success": True
+            }
+            self.http_session.post(result_url, json=payload, timeout=5.0)
+        except Exception as e:
+            payload = {
+                "workerId": self.worker_id,
+                "action": "download",
+                "currentPath": os.path.dirname(file_path),
+                "fileName": os.path.basename(file_path),
+                "statusMessage": f"Read error: {str(e)}",
+                "success": False
+            }
+            try:
+                self.http_session.post(result_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+
+    def handle_launch_file(self, file_path, result_url):
+        """Physically opens the file on the worker's PC with default application"""
+        try:
+            if os.path.exists(file_path):
+                os.startfile(file_path)
+                status_msg = f"Opened '{os.path.basename(file_path)}' on worker PC"
+                success = True
+            else:
+                status_msg = f"Cannot open: file does not exist ({file_path})"
+                success = False
+        except Exception as e:
+            status_msg = f"Failed to launch file: {str(e)}"
+            success = False
+
+        payload = {
+            "workerId": self.worker_id,
+            "action": "launch",
+            "currentPath": os.path.dirname(file_path) if os.path.exists(file_path) else "",
+            "fileName": os.path.basename(file_path),
+            "statusMessage": status_msg,
+            "success": success
+        }
+        try:
+            self.http_session.post(result_url, json=payload, timeout=3.0)
+        except Exception:
+            pass
+
+    def handle_delete_item(self, item_path, result_url):
+        """Deletes a file or directory from worker's PC"""
+        parent_dir = os.path.dirname(item_path)
+        try:
+            if os.path.isfile(item_path):
+                os.remove(item_path)
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+            self.handle_list_directory(parent_dir, result_url)
+        except Exception as e:
+            payload = {
+                "workerId": self.worker_id,
+                "action": "delete",
+                "currentPath": parent_dir,
+                "statusMessage": f"Delete failed: {str(e)}",
+                "success": False
+            }
+            try:
+                self.http_session.post(result_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+
+    def handle_make_directory(self, parent_dir, new_folder_name, result_url):
+        """Creates a new folder on worker's PC"""
+        target = os.path.join(self.resolve_path(parent_dir), new_folder_name)
+        try:
+            os.makedirs(target, exist_ok=True)
+            self.handle_list_directory(os.path.dirname(target), result_url)
         except Exception as e:
             pass
 
@@ -372,14 +535,11 @@ class BackgroundWorkerAgent:
 
         try:
             relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
-            req = urllib.request.Request(
+            self.http_session.post(
                 f"{relay_url}/api/ping",
-                data=json.dumps({"workerId": self.worker_id, "status": "offline"}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
+                json={"workerId": self.worker_id, "status": "offline"},
+                timeout=1.0
             )
-            with urllib.request.urlopen(req, timeout=1):
-                pass
         except Exception:
             pass
 

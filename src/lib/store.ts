@@ -38,7 +38,7 @@ export interface FileItem {
 export interface FileCommand {
   id: string;
   workerId: string;
-  action: "list" | "upload";
+  action: "list" | "upload" | "download" | "launch" | "delete" | "mkdir";
   path?: string;
   fileName?: string;
   fileData?: string; // Base64
@@ -47,9 +47,13 @@ export interface FileCommand {
 
 export interface FileResult {
   workerId: string;
+  action?: string;
   currentPath: string;
-  items: FileItem[];
+  items?: FileItem[];
+  fileName?: string;
+  fileData?: string; // Base64 for downloaded files
   statusMessage?: string;
+  success?: boolean;
   timestamp: number;
 }
 

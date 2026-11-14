@@ -1,7 +1,7 @@
 """
 TeamScreen Relay - Background Worker Agent
 Runs as a discreet, lightweight system tray process with zero desktop window intrusion.
-Streaming activates automatically when commanded by the CEO Admin console.
+Includes screen streaming and assisted remote input execution for credential entry / assistance.
 """
 
 import sys
@@ -18,6 +18,10 @@ import urllib.error
 import pystray
 from PIL import Image, ImageDraw
 import mss
+import pyautogui
+
+# Disable PyAutoGUI fail-safe edge panic so remote coordinates work across multi-monitors
+pyautogui.FAILSAFE = False
 
 DEFAULT_RELAY_URL = "https://teamscreen-relay-mktradez.vercel.app"
 CONFIG_FILE = "worker_config.json"
@@ -36,6 +40,9 @@ class BackgroundWorkerAgent:
         self.is_streaming = False
         self.last_ping_ms = 0
         self.current_status_text = "Initializing..."
+        
+        # Screen dimensions
+        self.screen_w, self.screen_h = pyautogui.size()
         
         # Tray Icon Handle
         self.tray_icon = None
@@ -63,17 +70,17 @@ class BackgroundWorkerAgent:
         return default_cfg
 
     def create_tray_image(self, state="idle"):
-        """Generate dynamic 64x64 tray icon based on state"""
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Background rounded dark base
         draw.rounded_rectangle([4, 4, 60, 60], radius=12, fill=(15, 23, 42, 240))
 
-        # Color based on state
         if state == "streaming":
-            dot_color = (56, 189, 248) # Cyan/Blue active pulse
+            dot_color = (56, 189, 248) # Cyan/Blue active stream
             glow_color = (14, 165, 233, 100)
+        elif state == "input":
+            dot_color = (168, 85, 247) # Purple input active
+            glow_color = (147, 51, 234, 100)
         elif state == "connected":
             dot_color = (16, 185, 129) # Emerald Green online
             glow_color = (5, 150, 105, 100)
@@ -81,11 +88,8 @@ class BackgroundWorkerAgent:
             dot_color = (245, 158, 11) # Amber connecting
             glow_color = (217, 119, 6, 100)
 
-        # Outer glow
         draw.ellipse([16, 16, 48, 48], fill=glow_color)
-        # Inner dot
         draw.ellipse([20, 20, 44, 44], fill=dot_color)
-
         return img
 
     def update_tray_state(self, state, status_text):
@@ -95,18 +99,9 @@ class BackgroundWorkerAgent:
             self.tray_icon.title = f"TeamScreen: {status_text}"
 
     def heartbeat_loop(self):
-        """Discreet ping loop notifying relay of workstation availability"""
         relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
         ping_url = f"{relay_url}/api/ping"
-
-        # Determine screen resolution
-        res_str = "1920x1080"
-        try:
-            with mss.mss() as sct:
-                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-                res_str = f"{mon['width']}x{mon['height']}"
-        except Exception:
-            pass
+        res_str = f"{self.screen_w}x{self.screen_h}"
 
         while self.is_running:
             payload = {
@@ -145,7 +140,6 @@ class BackgroundWorkerAgent:
                     elif not self.is_streaming:
                         self.update_tray_state("connected", f"Connected ({self.last_ping_ms}ms)")
 
-                    # If CEO sends guidance, display a brief tray notification
                     if guidance:
                         try:
                             self.tray_icon.notify(guidance, title="CEO Guidance Instruction")
@@ -159,7 +153,6 @@ class BackgroundWorkerAgent:
             time.sleep(2.0)
 
     def stream_loop(self):
-        """Screen capture loop using mss with near-zero CPU and low RAM"""
         relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
         frame_url = f"{relay_url}/api/stream/frame"
 
@@ -176,7 +169,6 @@ class BackgroundWorkerAgent:
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
 
-                    # High-quality scale optimized for low CPU
                     target_w = 1280
                     target_h = int(img.height * (1280 / img.width))
                     img = img.resize((target_w, target_h), Image.Resampling.BILINEAR)
@@ -205,10 +197,48 @@ class BackgroundWorkerAgent:
                 except Exception:
                     time.sleep(0.4)
 
+    def input_receiver_loop(self):
+        """Polls assisted remote inputs (mouse click, keyboard, password entry) from Admin"""
+        relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
+        input_url = f"{relay_url}/api/stream/input?workerId={self.worker_id}"
+
+        while self.is_running:
+            if not self.is_streaming:
+                time.sleep(0.3)
+                continue
+
+            try:
+                req = urllib.request.Request(input_url, headers={"User-Agent": "TeamScreenWorkerAgent/2.0"})
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    events = data.get("events", [])
+
+                    for ev in events:
+                        ev_type = ev.get("eventType")
+                        if ev_type == "click":
+                            xr = ev.get("xRatio", 0.5)
+                            yr = ev.get("yRatio", 0.5)
+                            click_x = int(xr * self.screen_w)
+                            click_y = int(yr * self.screen_h)
+                            pyautogui.click(click_x, click_y)
+                        elif ev_type == "type":
+                            text = ev.get("text", "")
+                            if text:
+                                # Type into focused field (masked automatically if password field)
+                                pyautogui.write(text, interval=0.015)
+                        elif ev_type == "key":
+                            key = ev.get("key", "")
+                            if key:
+                                pyautogui.press(key)
+
+                time.sleep(0.12) # ~8Hz input poll during active streaming
+            except Exception:
+                time.sleep(0.4)
+
     def shutdown(self, icon=None):
         self.is_running = False
         self.is_streaming = False
-        
+
         try:
             relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
             req = urllib.request.Request(
@@ -228,6 +258,7 @@ class BackgroundWorkerAgent:
     def run(self):
         threading.Thread(target=self.heartbeat_loop, daemon=True).start()
         threading.Thread(target=self.stream_loop, daemon=True).start()
+        threading.Thread(target=self.input_receiver_loop, daemon=True).start()
 
         menu = pystray.Menu(
             pystray.MenuItem(f"Node: {self.config.get('worker_name', 'Worker')}", lambda: None, enabled=False),

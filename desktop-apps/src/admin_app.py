@@ -1,6 +1,6 @@
 """
 Executive Screen Relay - CEO Admin Command Center
-High-performance desktop monitoring and guidance console for CEO / Executives.
+Enhanced with Session Video Recording (MP4) and Assisted Remote Input & Credential Injection.
 """
 
 import sys
@@ -8,15 +8,19 @@ import os
 import time
 import json
 import base64
+import tempfile
 import threading
 from io import BytesIO
 import urllib.request
 import urllib.error
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
+import cv2
+import numpy as np
 
-DEFAULT_RELAY_URL = "https://teamscreen-relay.vercel.app"
+DEFAULT_RELAY_URL = "https://teamscreen-relay-mktradez.vercel.app"
 CONFIG_FILE = "admin_config.json"
 
 class CEOAdminApp(ctk.CTk):
@@ -27,8 +31,8 @@ class CEOAdminApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         self.title("CEO Command Center // TeamScreen Relay")
-        self.geometry("1180x760")
-        self.minsize(960, 620)
+        self.geometry("1260x820")
+        self.minsize(1020, 680)
 
         # State Variables
         self.relay_url = DEFAULT_RELAY_URL
@@ -37,11 +41,25 @@ class CEOAdminApp(ctk.CTk):
         self.is_monitoring = False
         self.stop_event = threading.Event()
         self.current_photo = None
+        self.latest_cv_frame = None
         self.fps_count = 0
         self.last_fps_time = time.time()
         self.current_fps = 0
 
-        # Load configuration
+        # Video Recording State
+        self.is_recording = False
+        self.record_start_time = 0
+        self.video_writer = None
+        self.temp_record_path = None
+        self.record_frame_size = None
+
+        # Remote Input State
+        self.remote_input_enabled = False
+        self.canvas_actual_width = 800
+        self.canvas_actual_height = 500
+        self.image_display_rect = (0, 0, 800, 500) # (x_offset, y_offset, w, h)
+
+        # Load config
         self.load_config()
 
         # Build UI
@@ -86,7 +104,7 @@ class CEOAdminApp(ctk.CTk):
 
         subtitle = ctk.CTkLabel(
             title_box,
-            text="Live Fleet Observation & Guidance Console",
+            text="Executive Remote Assistance, Recording & Guidance Hub",
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color="#94A3B8"
         )
@@ -99,7 +117,7 @@ class CEOAdminApp(ctk.CTk):
         self.url_entry = ctk.CTkEntry(
             config_box,
             placeholder_text="Vercel Relay URL",
-            width=320,
+            width=300,
             fg_color="#1E293B",
             border_color="#334155"
         )
@@ -121,7 +139,7 @@ class CEOAdminApp(ctk.CTk):
         main_container.pack(fill="both", expand=True)
 
         # Left Sidebar (Workers Fleet)
-        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=340, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=330, corner_radius=0)
         self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
         self.sidebar.pack_propagate(False)
 
@@ -161,8 +179,8 @@ class CEOAdminApp(ctk.CTk):
         self.viewport_container = ctk.CTkFrame(main_container, fg_color="#090D16", corner_radius=0)
         self.viewport_container.pack(side="right", fill="both", expand=True)
 
-        # Viewport Header (Active Session Info)
-        self.vp_header = ctk.CTkFrame(self.viewport_container, fg_color="#131B2E", height=54, corner_radius=0)
+        # Viewport Header (Active Session Info & Recording / Input controls)
+        self.vp_header = ctk.CTkFrame(self.viewport_container, fg_color="#131B2E", height=58, corner_radius=0)
         self.vp_header.pack(fill="x", side="top")
 
         self.vp_title = ctk.CTkLabel(
@@ -171,45 +189,59 @@ class CEOAdminApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
             text_color="#94A3B8"
         )
-        self.vp_title.pack(side="left", padx=20, pady=12)
+        self.vp_title.pack(side="left", padx=18, pady=12)
 
         self.vp_stats = ctk.CTkLabel(
             self.vp_header,
             text="",
-            font=ctk.CTkFont(family="Segoe UI", size=12),
+            font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color="#64748B"
         )
-        self.vp_stats.pack(side="left", padx=10)
+        self.vp_stats.pack(side="left", padx=8)
 
-        # Session Action Controls
+        # Controls Container
         self.controls_box = ctk.CTkFrame(self.vp_header, fg_color="transparent")
         self.controls_box.pack(side="right", padx=16)
 
+        # Remote Input Toggle Button
+        self.input_toggle_btn = ctk.CTkButton(
+            self.controls_box,
+            text="🖱️ Remote Input: OFF",
+            fg_color="#334155",
+            hover_color="#475569",
+            width=140,
+            command=self.toggle_remote_input
+        )
+        self.input_toggle_btn.pack(side="left", padx=4)
+        self.input_toggle_btn.configure(state="disabled")
+
+        # Record Session Button
+        self.record_btn = ctk.CTkButton(
+            self.controls_box,
+            text="⏺️ Record Session",
+            fg_color="#7C2D12",
+            hover_color="#991B1B",
+            width=130,
+            command=self.toggle_recording
+        )
+        self.record_btn.pack(side="left", padx=4)
+        self.record_btn.configure(state="disabled")
+
+        # Stream Toggle Button
         self.stream_toggle_btn = ctk.CTkButton(
             self.controls_box,
             text="START STREAM",
             fg_color="#10B981",
             hover_color="#059669",
-            width=120,
+            width=110,
             command=self.toggle_stream_session
         )
-        self.stream_toggle_btn.pack(side="left", padx=6)
+        self.stream_toggle_btn.pack(side="left", padx=4)
         self.stream_toggle_btn.configure(state="disabled")
-
-        self.snapshot_btn = ctk.CTkButton(
-            self.controls_box,
-            text="Snapshot",
-            fg_color="#3B82F6",
-            hover_color="#2563EB",
-            width=90,
-            command=self.save_snapshot
-        )
-        self.snapshot_btn.pack(side="left", padx=6)
-        self.snapshot_btn.configure(state="disabled")
 
         # Screen Display Canvas / Area
         self.canvas_frame = ctk.CTkFrame(self.viewport_container, fg_color="#030712", corner_radius=8)
-        self.canvas_frame.pack(fill="both", expand=True, padx=16, pady=12)
+        self.canvas_frame.pack(fill="both", expand=True, padx=14, pady=(10, 6))
 
         self.screen_label = ctk.CTkLabel(
             self.canvas_frame,
@@ -218,37 +250,99 @@ class CEOAdminApp(ctk.CTk):
             text_color="#475569"
         )
         self.screen_label.pack(fill="both", expand=True)
+        # Bind mouse click for remote assisted input
+        self.screen_label.bind("<Button-1>", self.on_canvas_click)
+
+        # Assisted Credential & Remote Keystroke Console
+        input_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=50, corner_radius=6)
+        input_bar.pack(fill="x", side="bottom", padx=14, pady=(0, 6))
+
+        input_title = ctk.CTkLabel(
+            input_bar,
+            text="REMOTE KEYSTROKES:",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#A855F7"
+        )
+        input_title.pack(side="left", padx=(12, 6))
+
+        # Password mask toggle checkbox
+        self.mask_var = ctk.BooleanVar(value=True)
+        self.mask_checkbox = ctk.CTkCheckBox(
+            input_bar,
+            text="Mask Password",
+            variable=self.mask_var,
+            command=self.toggle_password_mask,
+            checkbox_width=18,
+            checkbox_height=18,
+            font=ctk.CTkFont(size=11)
+        )
+        self.mask_checkbox.pack(side="left", padx=(0, 8))
+
+        # Text/Password input
+        self.key_input = ctk.CTkEntry(
+            input_bar,
+            placeholder_text="Enter secret password or text to type into worker's focused window...",
+            show="*",
+            fg_color="#1E293B",
+            border_color="#334155"
+        )
+        self.key_input.pack(side="left", fill="x", expand=True, padx=6, pady=8)
+        self.key_input.bind("<Return>", lambda e: self.send_remote_text())
+
+        type_btn = ctk.CTkButton(
+            input_bar,
+            text="Type into PC",
+            fg_color="#9333EA",
+            hover_color="#7E22CE",
+            width=110,
+            command=self.send_remote_text
+        )
+        type_btn.pack(side="left", padx=4)
+
+        # Quick special keys
+        enter_btn = ctk.CTkButton(input_bar, text="[Enter]", width=55, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("enter"))
+        enter_btn.pack(side="left", padx=2)
+        tab_btn = ctk.CTkButton(input_bar, text="[Tab]", width=50, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("tab"))
+        tab_btn.pack(side="left", padx=2)
+        esc_btn = ctk.CTkButton(input_bar, text="[Esc]", width=50, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("esc"))
+        esc_btn.pack(side="left", padx=(2, 10))
 
         # Bottom CEO Guidance Console
-        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=60, corner_radius=0)
-        guidance_bar.pack(fill="x", side="bottom", padx=16, pady=(0, 16))
+        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=46, corner_radius=6)
+        guidance_bar.pack(fill="x", side="bottom", padx=14, pady=(0, 10))
 
         guidance_label = ctk.CTkLabel(
             guidance_bar,
             text="CEO GUIDANCE:",
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             text_color="#38BDF8"
         )
-        guidance_label.pack(side="left", padx=14)
+        guidance_label.pack(side="left", padx=(12, 6))
 
         self.guidance_input = ctk.CTkEntry(
             guidance_bar,
-            placeholder_text="Type real-time guidance instruction for worker (e.g. 'Open contract on section 4')...",
+            placeholder_text="Type guidance note for worker (e.g. 'Opening the database now')...",
             fg_color="#1E293B",
             border_color="#334155"
         )
-        self.guidance_input.pack(side="left", fill="x", expand=True, padx=8, pady=10)
+        self.guidance_input.pack(side="left", fill="x", expand=True, padx=6, pady=6)
         self.guidance_input.bind("<Return>", lambda e: self.send_guidance())
 
         send_btn = ctk.CTkButton(
             guidance_bar,
-            text="Send Instruction",
+            text="Send Guidance",
             fg_color="#0284C7",
             hover_color="#0369A1",
-            width=130,
+            width=110,
             command=self.send_guidance
         )
-        send_btn.pack(side="right", padx=(0, 12))
+        send_btn.pack(side="right", padx=(0, 10))
+
+    def toggle_password_mask(self):
+        if self.mask_var.get():
+            self.key_input.configure(show="*")
+        else:
+            self.key_input.configure(show="")
 
     def apply_url(self):
         new_url = self.url_entry.get().strip().rstrip("/")
@@ -262,14 +356,14 @@ class CEOAdminApp(ctk.CTk):
                 workers_url = f"{self.relay_url}/api/workers"
                 req = urllib.request.Request(
                     workers_url,
-                    headers={"User-Agent": "CEOAdmin/1.0"},
+                    headers={"User-Agent": "CEOAdmin/2.0"},
                     method="GET"
                 )
                 with urllib.request.urlopen(req, timeout=3) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     workers = data.get("workers", [])
                     self.after(0, self.update_workers_list, workers)
-            except Exception as e:
+            except Exception:
                 pass
             time.sleep(2.0)
 
@@ -277,7 +371,6 @@ class CEOAdminApp(ctk.CTk):
         self.workers = workers
         self.online_count_badge.configure(text=f"{len(workers)} online")
 
-        # Clear existing list items
         for widget in self.workers_list_frame.winfo_children():
             widget.destroy()
 
@@ -286,7 +379,7 @@ class CEOAdminApp(ctk.CTk):
         if not workers:
             empty_lbl = ctk.CTkLabel(
                 self.workers_list_frame,
-                text="Waiting for workers to connect...\nShare worker app with team.",
+                text="Waiting for workers to connect...\nWorkers run WorkerRelay.exe in tray.",
                 font=ctk.CTkFont(size=12),
                 text_color="#64748B",
                 justify="center"
@@ -304,7 +397,6 @@ class CEOAdminApp(ctk.CTk):
             if search_query and (search_query not in name.lower() and search_query not in dept.lower()):
                 continue
 
-            # Card for each worker
             is_selected = (w_id == self.selected_worker_id)
             bg_color = "#1E293B" if not is_selected else "#1E3A5F"
             border_color = "#3B82F6" if is_selected else "#334155"
@@ -324,7 +416,6 @@ class CEOAdminApp(ctk.CTk):
             row1.pack(fill="x", padx=12, pady=(10, 2))
             row1.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
 
-            # Status dot
             dot_color = "#3B82F6" if status == "streaming" else "#10B981"
             dot = ctk.CTkLabel(row1, text="●", text_color=dot_color, font=ctk.CTkFont(size=14))
             dot.pack(side="left", padx=(0, 6))
@@ -372,9 +463,9 @@ class CEOAdminApp(ctk.CTk):
                 text=f"Res: {worker_info.get('screenResolution', '1080p')} | PC: {worker_info.get('hostname', '')}"
             )
             self.stream_toggle_btn.configure(state="normal")
-            self.snapshot_btn.configure(state="normal")
+            self.record_btn.configure(state="normal")
+            self.input_toggle_btn.configure(state="normal")
 
-            # Auto-request stream
             self.start_stream_session()
 
     def toggle_stream_session(self):
@@ -388,13 +479,12 @@ class CEOAdminApp(ctk.CTk):
             return
         self.is_monitoring = True
         self.stream_toggle_btn.configure(text="STOP STREAM", fg_color="#DC2626", hover_color="#B91C1C")
-
-        # Notify Relay of stream request
         threading.Thread(target=self.notify_relay_stream_req, args=(True,), daemon=True).start()
-        # Launch frame receiver loop
         threading.Thread(target=self.frame_receiver_loop, daemon=True).start()
 
     def stop_stream_session(self):
+        if self.is_recording:
+            self.stop_recording_and_save()
         self.is_monitoring = False
         self.stream_toggle_btn.configure(text="START STREAM", fg_color="#10B981", hover_color="#059669")
         threading.Thread(target=self.notify_relay_stream_req, args=(False,), daemon=True).start()
@@ -414,7 +504,163 @@ class CEOAdminApp(ctk.CTk):
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with urllib.request.urlopen(req, timeout=3):
+                pass
+        except Exception:
+            pass
+
+    # --- Feature 1: Video Recording Engine (MP4) ---
+    def toggle_recording(self):
+        if not self.is_recording:
+            self.start_recording()
+        else:
+            self.stop_recording_and_save()
+
+    def start_recording(self):
+        if not self.is_monitoring or not self.selected_worker_id:
+            messagebox.showinfo("Recording", "Please initiate a live stream before starting recording.")
+            return
+
+        fd, temp_path = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        self.temp_record_path = temp_path
+        self.record_frame_size = None
+        self.video_writer = None
+        self.is_recording = True
+        self.record_start_time = time.time()
+
+        self.record_btn.configure(
+            text="⏹️ Stop & Save Video",
+            fg_color="#DC2626",
+            hover_color="#B91C1C"
+        )
+
+        threading.Thread(target=self.recording_timer_loop, daemon=True).start()
+
+    def recording_timer_loop(self):
+        while self.is_recording:
+            elapsed = int(time.time() - self.record_start_time)
+            mins = elapsed // 60
+            secs = elapsed % 60
+            self.after(0, lambda: self.vp_stats.configure(text=f"● REC [{mins:02d}:{secs:02d}]"))
+            time.sleep(1.0)
+
+    def write_frame_to_video(self, cv_frame):
+        if not self.is_recording:
+            return
+
+        h, w = cv_frame.shape[:2]
+        if self.video_writer is None:
+            self.record_frame_size = (w, h)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            self.video_writer = cv2.VideoWriter(self.temp_record_path, fourcc, 20.0, (w, h))
+
+        if (w, h) == self.record_frame_size:
+            self.video_writer.write(cv_frame)
+
+    def stop_recording_and_save(self):
+        self.is_recording = False
+        self.record_btn.configure(
+            text="⏺️ Record Session",
+            fg_color="#7C2D12",
+            hover_color="#991B1B"
+        )
+
+        if self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
+
+        if self.temp_record_path and os.path.exists(self.temp_record_path):
+            save_path = filedialog.asksaveasfilename(
+                title="Save Worker Screen Video Recording",
+                defaultextension=".mp4",
+                initialfile=f"session_{self.selected_worker_id}_{int(time.time())}.mp4",
+                filetypes=[("MP4 Video File", "*.mp4"), ("All Files", "*.*")]
+            )
+
+            if save_path:
+                try:
+                    import shutil
+                    shutil.copy2(self.temp_record_path, save_path)
+                    messagebox.showinfo("Recording Saved", f"Session video successfully saved to:\n{save_path}")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Could not save video: {e}")
+
+            try:
+                os.remove(self.temp_record_path)
+            except Exception:
+                pass
+
+        self.vp_stats.configure(text="")
+
+    # --- Feature 2: Assisted Remote Input & Credential Injection ---
+    def toggle_remote_input(self):
+        self.remote_input_enabled = not self.remote_input_enabled
+        if self.remote_input_enabled:
+            self.input_toggle_btn.configure(
+                text="🖱️ Remote Input: ON",
+                fg_color="#9333EA",
+                hover_color="#7E22CE"
+            )
+            self.screen_label.configure(cursor="crosshair")
+        else:
+            self.input_toggle_btn.configure(
+                text="🖱️ Remote Input: OFF",
+                fg_color="#334155",
+                hover_color="#475569"
+            )
+            self.screen_label.configure(cursor="")
+
+    def on_canvas_click(self, event):
+        if not self.remote_input_enabled or not self.selected_worker_id:
+            return
+
+        # Calculate click position relative to the displayed screen image
+        ox, oy, dw, dh = self.image_display_rect
+        cx = event.x - ox
+        cy = event.y - oy
+
+        if 0 <= cx <= dw and 0 <= cy <= dh and dw > 0 and dh > 0:
+            x_ratio = cx / dw
+            y_ratio = cy / dh
+            self.dispatch_remote_input("click", xRatio=x_ratio, yRatio=y_ratio)
+
+    def send_remote_text(self):
+        text = self.key_input.get()
+        if not text or not self.selected_worker_id:
+            return
+        self.dispatch_remote_input("type", text=text)
+        self.key_input.delete(0, "end")
+
+    def send_special_key(self, key_name):
+        if not self.selected_worker_id:
+            return
+        self.dispatch_remote_input("key", key=key_name)
+
+    def dispatch_remote_input(self, event_type, xRatio=None, yRatio=None, text=None, key=None):
+        if not self.selected_worker_id:
+            return
+        payload = {
+            "workerId": self.selected_worker_id,
+            "eventType": event_type
+        }
+        if xRatio is not None: payload["xRatio"] = xRatio
+        if yRatio is not None: payload["yRatio"] = yRatio
+        if text is not None: payload["text"] = text
+        if key is not None: payload["key"] = key
+
+        threading.Thread(target=self._send_input_http, args=(payload,), daemon=True).start()
+
+    def _send_input_http(self, payload):
+        try:
+            url = f"{self.relay_url}/api/stream/input"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=2):
                 pass
         except Exception:
             pass
@@ -435,7 +681,7 @@ class CEOAdminApp(ctk.CTk):
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with urllib.request.urlopen(req, timeout=3):
                 pass
             self.guidance_input.delete(0, "end")
         except Exception:
@@ -448,16 +694,23 @@ class CEOAdminApp(ctk.CTk):
                 continue
             try:
                 frame_url = f"{self.relay_url}/api/stream/frame?workerId={self.selected_worker_id}"
-                req = urllib.request.Request(frame_url, headers={"User-Agent": "CEOAdmin/1.0"})
+                req = urllib.request.Request(frame_url, headers={"User-Agent": "CEOAdmin/2.0"})
                 with urllib.request.urlopen(req, timeout=2) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     b64_frame = data.get("frame")
                     if b64_frame:
                         img_bytes = base64.b64decode(b64_frame)
                         img = Image.open(BytesIO(img_bytes))
+
+                        # Convert to OpenCV image for recording
+                        cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                        self.latest_cv_frame = cv_img
+
+                        if self.is_recording:
+                            self.write_frame_to_video(cv_img)
+
                         self.after(0, self.display_frame, img)
 
-                        # Update FPS
                         self.fps_count += 1
                         now = time.time()
                         if now - self.last_fps_time >= 1.0:
@@ -465,12 +718,11 @@ class CEOAdminApp(ctk.CTk):
                             self.fps_count = 0
                             self.last_fps_time = now
 
-                time.sleep(0.04) # ~25 FPS pull
+                time.sleep(0.04)
             except Exception:
                 time.sleep(0.2)
 
     def display_frame(self, img):
-        # Resize to fit canvas_frame
         cw = max(400, self.canvas_frame.winfo_width())
         ch = max(300, self.canvas_frame.winfo_height())
 
@@ -487,23 +739,20 @@ class CEOAdminApp(ctk.CTk):
         nw = max(10, nw)
         nh = max(10, nh)
 
+        # Store image display rectangle for mouse coordinate mapping
+        ox = (cw - nw) // 2
+        oy = (ch - nh) // 2
+        self.image_display_rect = (ox, oy, nw, nh)
+
         resized = img.resize((nw, nh), Image.Resampling.BILINEAR)
         photo = ctk.CTkImage(light_image=resized, dark_image=resized, size=(nw, nh))
 
         self.current_photo = photo
         self.screen_label.configure(image=photo, text="")
 
-    def save_snapshot(self):
-        if hasattr(self, "current_photo") and self.selected_worker_id:
-            try:
-                os.makedirs("snapshots", exist_ok=True)
-                filename = f"snapshots/snapshot_{self.selected_worker_id}_{int(time.time())}.png"
-                # Save notification
-                self.vp_stats.configure(text=f"Snapshot saved to {filename}")
-            except Exception:
-                pass
-
     def on_closing(self):
+        if self.is_recording:
+            self.stop_recording_and_save()
         self.stop_event.set()
         self.destroy()
 

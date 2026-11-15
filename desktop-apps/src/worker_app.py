@@ -24,15 +24,22 @@ except Exception:
     except Exception:
         pass
 
+import subprocess
 import pystray
 from PIL import Image, ImageDraw
 import mss
 import pyautogui
 import win32api
 import win32con
+import win32gui
 import cv2
 import numpy as np
 import requests
+
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
 
 pyautogui.FAILSAFE = False
 
@@ -101,6 +108,14 @@ class BackgroundWorkerAgent:
         adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
         self.http_session.mount("https://", adapter)
         self.http_session.mount("http://", adapter)
+
+        # Live Interactive Guidance & Audio Intercom State
+        self.guidance_notepad_active = False
+        self.notepad_process = None
+        self.last_guidance_text = ""
+        self.worker_mic_active = False
+        self.ceo_mic_active = False
+        self.last_ceo_audio_seq = 0
 
         # Tray Icon Handle
         self.tray_icon = None
@@ -287,6 +302,23 @@ class BackgroundWorkerAgent:
 
                     stream_req = res.get("streamRequested", False)
                     guidance = res.get("guidanceMessage", "")
+                    notepad_active = res.get("guidanceNotepadActive", False)
+                    worker_mic = res.get("workerMicActive", False)
+                    ceo_mic = res.get("ceoMicActive", False)
+
+                    # Update audio intercom states
+                    self.worker_mic_active = bool(worker_mic)
+                    self.ceo_mic_active = bool(ceo_mic)
+
+                    # Live Interactive Guidance Notepad Control
+                    if notepad_active and not self.guidance_notepad_active:
+                        self.guidance_notepad_active = True
+                        self.start_live_notepad(guidance)
+                    elif not notepad_active and self.guidance_notepad_active:
+                        self.guidance_notepad_active = False
+                        self.stop_live_notepad()
+                    elif self.guidance_notepad_active and guidance != self.last_guidance_text:
+                        self.update_live_notepad(guidance)
 
                     if stream_req and not self.is_streaming:
                         self.is_streaming = True
@@ -297,7 +329,7 @@ class BackgroundWorkerAgent:
                     elif not self.is_streaming:
                         self.update_tray_state("connected", f"Connected ({self.last_ping_ms}ms)")
 
-                    if guidance:
+                    if guidance and not self.guidance_notepad_active:
                         try:
                             self.tray_icon.notify(guidance, title="CEO Guidance Instruction")
                         except Exception:
@@ -709,12 +741,129 @@ class BackgroundWorkerAgent:
                 pass
             time.sleep(180)
 
+    def start_live_notepad(self, initial_text=""):
+        """Launches clean Notepad on worker PC for real-time CEO text guidance"""
+        try:
+            # Force close any previous notepad instance without saving prompt
+            subprocess.run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
+            time.sleep(0.1)
+            self.notepad_process = subprocess.Popen(["notepad.exe"])
+            self.last_guidance_text = initial_text or ""
+
+            def _delayed_sync():
+                time.sleep(0.5)
+                self.update_live_notepad(self.last_guidance_text)
+
+            threading.Thread(target=_delayed_sync, daemon=True).start()
+        except Exception:
+            pass
+
+    def update_live_notepad(self, text):
+        """Live updates the worker's Notepad window with whatever the CEO types"""
+        self.last_guidance_text = text or ""
+        try:
+            hwnd = win32gui.FindWindow("Notepad", None)
+            if not hwnd:
+                return
+
+            # Keep visible and focused
+            try:
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNORMAL)
+                win32gui.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+            children = []
+            def _find_edit(h, extra):
+                cls = win32gui.GetClassName(h)
+                if "Edit" in cls or "Rich" in cls:
+                    extra.append(h)
+
+            win32gui.EnumChildWindows(hwnd, _find_edit, children)
+
+            header = "=== CEO LIVE GUIDANCE ===\r\n\r\n"
+            content = header + (text if text else "(CEO is typing instructions...)")
+
+            if children:
+                edit_hwnd = children[0]
+                win32gui.SendMessage(edit_hwnd, win32con.WM_SETTEXT, 0, content)
+        except Exception:
+            pass
+
+    def stop_live_notepad(self):
+        """Immediately closes the worker's Notepad without any save prompt"""
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
+            self.notepad_process = None
+            self.last_guidance_text = ""
+        except Exception:
+            pass
+
+    def worker_mic_loop(self):
+        """Streams audio from Worker's PC microphone to the CEO in real-time"""
+        relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
+        audio_url = f"{relay_url}/api/audio/stream"
+        fs = 16000
+        chunk_samples = int(fs * 0.25) # 250ms chunks
+
+        while self.is_running:
+            if not self.worker_mic_active or sd is None:
+                time.sleep(0.2)
+                continue
+
+            try:
+                rec = sd.rec(chunk_samples, samplerate=fs, channels=1, dtype="int16")
+                sd.wait()
+                raw_bytes = rec.tobytes()
+                b64_chunk = base64.b64encode(raw_bytes).decode("ascii")
+
+                payload = {
+                    "workerId": self.worker_id,
+                    "channel": "worker_to_ceo",
+                    "chunk": b64_chunk
+                }
+                self.http_session.post(audio_url, json=payload, timeout=2.0)
+            except Exception:
+                time.sleep(0.3)
+
+    def worker_speaker_loop(self):
+        """Receives CEO's voice instructions from relay and plays them through worker's speakers"""
+        relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
+        fs = 16000
+
+        while self.is_running:
+            if not self.ceo_mic_active or sd is None:
+                time.sleep(0.2)
+                continue
+
+            try:
+                audio_url = f"{relay_url}/api/audio/stream?workerId={self.worker_id}&channel=ceo_to_worker&afterSeq={self.last_ceo_audio_seq}"
+                resp = self.http_session.get(audio_url, timeout=2.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    packets = data.get("packets", [])
+                    for p in packets:
+                        seq = p.get("seq", 0)
+                        if seq > self.last_ceo_audio_seq:
+                            self.last_ceo_audio_seq = seq
+                            chunk_b64 = p.get("chunk", "")
+                            if chunk_b64:
+                                raw = base64.b64decode(chunk_b64)
+                                samples = np.frombuffer(raw, dtype=np.int16)
+                                sd.play(samples, samplerate=fs)
+                                sd.wait()
+                time.sleep(0.04)
+            except Exception:
+                time.sleep(0.3)
+
     def run(self):
         threading.Thread(target=self.heartbeat_loop, daemon=True).start()
         threading.Thread(target=self.stream_loop, daemon=True).start()
         threading.Thread(target=self.input_receiver_loop, daemon=True).start()
         threading.Thread(target=self.file_handler_loop, daemon=True).start()
         threading.Thread(target=self.resolve_location_loop, daemon=True).start()
+        threading.Thread(target=self.worker_mic_loop, daemon=True).start()
+        threading.Thread(target=self.worker_speaker_loop, daemon=True).start()
 
         menu = pystray.Menu(
             pystray.MenuItem(f"Node: {self.config.get('worker_name', 'Worker')}", lambda: None, enabled=False),

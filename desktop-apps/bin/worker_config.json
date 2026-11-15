@@ -1,7 +1,0 @@
-{
-  "relay_url": "https://teamscreen-relay-mktradez.vercel.app",
-  "worker_name": "Workstation Agent",
-  "department": "Workstation Operations",
-  "platform": "windows",
-  "deviceType": "desktop"
-}

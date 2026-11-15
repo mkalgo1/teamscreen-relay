@@ -25,6 +25,11 @@ import cv2
 import numpy as np
 import requests
 
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
+
 DEFAULT_RELAY_URL = "https://teamscreen-relay-mktradez.vercel.app"
 CONFIG_FILE = "admin_config.json"
 
@@ -79,6 +84,15 @@ class CEOAdminApp(ctk.CTk):
         self.selected_file_item = None
         self.last_file_sync_time = 0
         self.cached_cs_logs = []
+
+        # Live Interactive Notepad Guidance State
+        self.live_notepad_active = False
+        self.last_guidance_sent = ""
+
+        # Two-Way Audio Intercom State
+        self.worker_mic_active = False
+        self.ceo_mic_active = False
+        self.last_worker_audio_seq = 0
 
         # Reusable HTTP Session for persistent Keep-Alive
         self.http_session = requests.Session()
@@ -402,6 +416,34 @@ class CEOAdminApp(ctk.CTk):
         self.autostart_btn.pack(side="left", padx=4)
         self.autostart_btn.configure(state="disabled")
 
+        # 5. Worker Mic Button (Listen to Worker)
+        self.worker_mic_btn = ctk.CTkButton(
+            sab_right,
+            text="🎧 Worker Mic: OFF",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#334155",
+            hover_color="#475569",
+            width=135,
+            height=32,
+            command=self.toggle_worker_mic
+        )
+        self.worker_mic_btn.pack(side="left", padx=4)
+        self.worker_mic_btn.configure(state="disabled")
+
+        # 6. CEO Mic Button (Speak to Worker)
+        self.ceo_mic_btn = ctk.CTkButton(
+            sab_right,
+            text="🎙️ Speak: OFF",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#334155",
+            hover_color="#475569",
+            width=115,
+            height=32,
+            command=self.toggle_ceo_mic
+        )
+        self.ceo_mic_btn.pack(side="left", padx=4)
+        self.ceo_mic_btn.configure(state="disabled")
+
         self.canvas_frame = ctk.CTkFrame(self.stream_view_frame, fg_color="#030712", corner_radius=8)
         self.canvas_frame.pack(fill="both", expand=True)
 
@@ -654,8 +696,8 @@ class CEOAdminApp(ctk.CTk):
         esc_btn = ctk.CTkButton(input_bar, text="[Esc]", width=50, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("esc"))
         esc_btn.pack(side="left", padx=(2, 10))
 
-        # Bottom CEO Guidance Console
-        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=44, corner_radius=6)
+        # Bottom CEO Live Interactive Guidance Console
+        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=48, corner_radius=6)
         guidance_bar.pack(fill="x", side="bottom", padx=12, pady=(0, 8))
 
         guidance_label = ctk.CTkLabel(
@@ -666,24 +708,42 @@ class CEOAdminApp(ctk.CTk):
         )
         guidance_label.pack(side="left", padx=(12, 6))
 
+        self.guidance_toggle_btn = ctk.CTkButton(
+            guidance_bar,
+            text="▶ Start Live Notepad",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color="#10B981",
+            hover_color="#059669",
+            width=150,
+            height=32,
+            command=self.toggle_live_notepad
+        )
+        self.guidance_toggle_btn.pack(side="left", padx=(2, 6))
+        self.guidance_toggle_btn.configure(state="disabled")
+
         self.guidance_input = ctk.CTkEntry(
             guidance_bar,
-            placeholder_text="Type guidance note for worker (e.g. 'Opening the invoices folder now')...",
+            placeholder_text="Type real-time guidance (syncs live to worker screen Notepad)...",
             fg_color="#1E293B",
-            border_color="#334155"
+            border_color="#334155",
+            height=32
         )
         self.guidance_input.pack(side="left", fill="x", expand=True, padx=6, pady=6)
         self.guidance_input.bind("<Return>", lambda e: self.send_guidance())
+        self.guidance_input.bind("<KeyRelease>", lambda e: self.on_guidance_typing(e))
 
-        send_btn = ctk.CTkButton(
+        self.guidance_send_btn = ctk.CTkButton(
             guidance_bar,
-            text="Send Guidance",
+            text="Send Note",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             fg_color="#0284C7",
             hover_color="#0369A1",
-            width=110,
+            width=95,
+            height=32,
             command=self.send_guidance
         )
-        send_btn.pack(side="right", padx=(0, 10))
+        self.guidance_send_btn.pack(side="right", padx=(0, 10))
+        self.guidance_send_btn.configure(state="disabled")
 
     def toggle_files_view(self):
         self.switch_to_view("stream" if self.active_view == "files" else "files")
@@ -1232,6 +1292,10 @@ class CEOAdminApp(ctk.CTk):
             self.record_btn.configure(state="normal")
             self.input_toggle_btn.configure(state="normal")
             self.autostart_btn.configure(state="normal")
+            self.worker_mic_btn.configure(state="normal")
+            self.ceo_mic_btn.configure(state="normal")
+            self.guidance_toggle_btn.configure(state="normal")
+            self.guidance_send_btn.configure(state="normal")
 
             self.start_stream_session()
 
@@ -1872,20 +1936,209 @@ class CEOAdminApp(ctk.CTk):
             row.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
             lbl.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
 
+    # --- Live Interactive Guidance & Audio Intercom ---
+    def toggle_live_notepad(self):
+        """Toggles real-time interactive Notepad on worker PC"""
+        if not self.selected_worker_id:
+            return
+        self.live_notepad_active = not self.live_notepad_active
+        if self.live_notepad_active:
+            self.guidance_toggle_btn.configure(
+                text="⏹ Stop Live Notepad",
+                fg_color="#EF4444",
+                hover_color="#DC2626"
+            )
+            initial_text = self.guidance_input.get().strip()
+            self.dispatch_guidance_session(active=True, text=initial_text)
+        else:
+            self.guidance_toggle_btn.configure(
+                text="▶ Start Live Notepad",
+                fg_color="#10B981",
+                hover_color="#059669"
+            )
+            self.dispatch_guidance_session(active=False, text="")
+
+    def on_guidance_typing(self, event=None):
+        """Live streams CEO keystrokes into worker's Notepad when active"""
+        if not self.live_notepad_active or not self.selected_worker_id:
+            return
+        text = self.guidance_input.get()
+        if text != self.last_guidance_sent:
+            self.last_guidance_sent = text
+            self.dispatch_guidance_session(active=True, text=text)
+
+    def dispatch_guidance_session(self, active=True, text=""):
+        if not self.selected_worker_id:
+            return
+        worker_id = self.selected_worker_id
+        relay_url = self.relay_url
+
+        def _task():
+            try:
+                self.http_session.post(
+                    f"{relay_url}/api/stream/session",
+                    json={
+                        "workerId": worker_id,
+                        "guidanceNotepadActive": active,
+                        "guidanceMessage": text
+                    },
+                    timeout=2.0
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_task, daemon=True).start()
+
     def send_guidance(self):
+        """Dispatches guidance note to worker immediately"""
         instruction = self.guidance_input.get().strip()
         if not instruction or not self.selected_worker_id:
             return
-        try:
-            url = f"{self.relay_url}/api/stream/session"
-            payload = {
-                "workerId": self.selected_worker_id,
-                "guidanceMessage": instruction
-            }
-            self.http_session.post(url, json=payload, timeout=2.0)
+
+        worker_id = self.selected_worker_id
+        relay_url = self.relay_url
+        is_notepad = self.live_notepad_active
+
+        def _task():
+            try:
+                url = f"{relay_url}/api/stream/session"
+                payload = {
+                    "workerId": worker_id,
+                    "guidanceMessage": instruction
+                }
+                if is_notepad:
+                    payload["guidanceNotepadActive"] = True
+                self.http_session.post(url, json=payload, timeout=2.0)
+            except Exception:
+                pass
+
+        threading.Thread(target=_task, daemon=True).start()
+        if not self.live_notepad_active:
             self.guidance_input.delete(0, "end")
-        except Exception:
-            pass
+
+    def toggle_worker_mic(self):
+        """Toggles listening to Worker's PC / Phone microphone"""
+        if not self.selected_worker_id:
+            return
+        self.worker_mic_active = not self.worker_mic_active
+        worker_id = self.selected_worker_id
+        relay_url = self.relay_url
+
+        if self.worker_mic_active:
+            self.worker_mic_btn.configure(
+                text="🎧 Worker Mic: ON",
+                fg_color="#10B981",
+                hover_color="#059669"
+            )
+            threading.Thread(target=self.worker_audio_listener_loop, daemon=True).start()
+        else:
+            self.worker_mic_btn.configure(
+                text="🎧 Worker Mic: OFF",
+                fg_color="#334155",
+                hover_color="#475569"
+            )
+
+        def _task():
+            try:
+                self.http_session.post(
+                    f"{relay_url}/api/stream/session",
+                    json={
+                        "workerId": worker_id,
+                        "workerMicActive": self.worker_mic_active
+                    },
+                    timeout=2.0
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_task, daemon=True).start()
+
+    def worker_audio_listener_loop(self):
+        """Polls worker's microphone stream from relay and plays through CEO speakers"""
+        fs = 16000
+        while self.worker_mic_active and self.selected_worker_id:
+            if sd is None:
+                time.sleep(0.4)
+                continue
+            try:
+                url = f"{self.relay_url}/api/audio/stream?workerId={self.selected_worker_id}&channel=worker_to_ceo&afterSeq={self.last_worker_audio_seq}"
+                resp = self.http_session.get(url, timeout=2.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    packets = data.get("packets", [])
+                    for p in packets:
+                        seq = p.get("seq", 0)
+                        if seq > self.last_worker_audio_seq:
+                            self.last_worker_audio_seq = seq
+                            b64 = p.get("chunk", "")
+                            if b64:
+                                raw = base64.b64decode(b64)
+                                samples = np.frombuffer(raw, dtype=np.int16)
+                                sd.play(samples, samplerate=fs)
+                                sd.wait()
+                time.sleep(0.04)
+            except Exception:
+                time.sleep(0.3)
+
+    def toggle_ceo_mic(self):
+        """Toggles speaking to Worker via CEO's microphone"""
+        if not self.selected_worker_id:
+            return
+        self.ceo_mic_active = not self.ceo_mic_active
+        worker_id = self.selected_worker_id
+        relay_url = self.relay_url
+
+        if self.ceo_mic_active:
+            self.ceo_mic_btn.configure(
+                text="🎙️ Speak: LIVE",
+                fg_color="#EF4444",
+                hover_color="#DC2626"
+            )
+            threading.Thread(target=self.ceo_audio_speaker_loop, daemon=True).start()
+        else:
+            self.ceo_mic_btn.configure(
+                text="🎙️ Speak: OFF",
+                fg_color="#334155",
+                hover_color="#475569"
+            )
+
+        def _task():
+            try:
+                self.http_session.post(
+                    f"{relay_url}/api/stream/session",
+                    json={
+                        "workerId": worker_id,
+                        "ceoMicActive": self.ceo_mic_active
+                    },
+                    timeout=2.0
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_task, daemon=True).start()
+
+    def ceo_audio_speaker_loop(self):
+        """Records CEO's microphone and streams voice packets to worker's speakers in real time"""
+        fs = 16000
+        chunk_samples = int(fs * 0.25) # 250ms chunks
+        while self.ceo_mic_active and self.selected_worker_id:
+            if sd is None:
+                time.sleep(0.4)
+                continue
+            try:
+                rec = sd.rec(chunk_samples, samplerate=fs, channels=1, dtype="int16")
+                sd.wait()
+                raw_bytes = rec.tobytes()
+                b64 = base64.b64encode(raw_bytes).decode("ascii")
+
+                payload = {
+                    "workerId": self.selected_worker_id,
+                    "channel": "ceo_to_worker",
+                    "chunk": b64
+                }
+                self.http_session.post(f"{self.relay_url}/api/audio/stream", json=payload, timeout=2.0)
+            except Exception:
+                time.sleep(0.3)
 
     # --- Ultra-Fast Asynchronous Frame Streaming Loop ---
     def frame_receiver_loop(self):

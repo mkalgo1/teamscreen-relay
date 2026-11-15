@@ -4,13 +4,27 @@ import { setStreamSession } from "@/lib/store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { workerId, streamRequested, guidanceMessage } = body;
+    const {
+      workerId,
+      streamRequested,
+      guidanceMessage,
+      guidanceNotepadActive,
+      workerMicActive,
+      ceoMicActive,
+    } = body;
 
     if (!workerId) {
       return NextResponse.json({ error: "workerId is required" }, { status: 400 });
     }
 
-    const updated = setStreamSession(workerId, streamRequested, guidanceMessage);
+    const updated = setStreamSession(
+      workerId,
+      streamRequested,
+      guidanceMessage,
+      guidanceNotepadActive,
+      workerMicActive,
+      ceoMicActive
+    );
 
     if (!updated) {
       return NextResponse.json({ error: "Worker not found or expired" }, { status: 404 });
@@ -21,6 +35,9 @@ export async function POST(req: NextRequest) {
       workerId: updated.workerId,
       streamRequested: !!updated.streamRequested,
       guidanceMessage: updated.guidanceMessage || "",
+      guidanceNotepadActive: !!updated.guidanceNotepadActive,
+      workerMicActive: !!updated.workerMicActive,
+      ceoMicActive: !!updated.ceoMicActive,
     });
   } catch (error) {
     return NextResponse.json({ error: "Invalid session payload" }, { status: 400 });

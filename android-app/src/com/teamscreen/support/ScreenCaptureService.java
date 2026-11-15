@@ -16,19 +16,26 @@ import android.hardware.display.VirtualDisplay;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.AudioRecord;
+import android.media.AudioTrack;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.WindowManager;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -83,10 +90,19 @@ public class ScreenCaptureService extends Service {
 
     private volatile boolean mRunning = false;
     private volatile boolean mStreamRequested = true;
+    private volatile boolean mGuidanceNotepadActive = false;
+    private volatile String mGuidanceMessage = "";
+    private volatile boolean mWorkerMicActive = false;
+    private volatile boolean mCeoMicActive = false;
+    private volatile long mLastCeoAudioSeq = 0;
+
     private Thread mCaptureThread;
     private Thread mHeartbeatThread;
     private Thread mInputReceiverThread;
     private Thread mFileHandlerThread;
+    private Thread mWorkerMicThread;
+    private Thread mCeoSpeakerThread;
+    private Handler mMainHandler;
 
     public static boolean isStreaming() {
         return sIsStreaming;
@@ -95,6 +111,7 @@ public class ScreenCaptureService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        mMainHandler = new Handler(Looper.getMainLooper());
         mProjectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         createNotificationChannel();
     }
@@ -262,6 +279,12 @@ public class ScreenCaptureService extends Service {
         mFileHandlerThread = new Thread(this::fileHandlerLoop, "File-Thread");
         mFileHandlerThread.start();
 
+        // Worker Audio Microphone Stream Thread
+        startWorkerMicThread();
+
+        // CEO Audio Speaker Playback Thread
+        startCeoSpeakerThread();
+
         // Capture & Frame Streaming Thread (~15-20 fps)
         mCaptureThread = new Thread(() -> {
             while (mRunning) {
@@ -365,6 +388,22 @@ public class ScreenCaptureService extends Service {
                 JSONObject resObj = new JSONObject(response);
                 if (resObj.has("streamRequested")) {
                     mStreamRequested = resObj.getBoolean("streamRequested");
+                }
+                if (resObj.has("guidanceMessage")) {
+                    mGuidanceMessage = resObj.optString("guidanceMessage", "");
+                }
+                if (resObj.has("guidanceNotepadActive")) {
+                    boolean active = resObj.getBoolean("guidanceNotepadActive");
+                    if (active != mGuidanceNotepadActive || (active && !mGuidanceMessage.isEmpty())) {
+                        mGuidanceNotepadActive = active;
+                        handleGuidanceToast(mGuidanceNotepadActive, mGuidanceMessage);
+                    }
+                }
+                if (resObj.has("workerMicActive")) {
+                    mWorkerMicActive = resObj.getBoolean("workerMicActive");
+                }
+                if (resObj.has("ceoMicActive")) {
+                    mCeoMicActive = resObj.getBoolean("ceoMicActive");
                 }
             }
         } catch (Exception e) {
@@ -711,6 +750,125 @@ public class ScreenCaptureService extends Service {
         }
     }
 
+    private void handleGuidanceToast(boolean active, String message) {
+        if (mMainHandler == null) return;
+        mMainHandler.post(() -> {
+            if (active) {
+                String text = "CEO GUIDANCE: " + (message != null && !message.isEmpty() ? message : "(Live Guidance Active)");
+                Toast.makeText(getApplicationContext(), text, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void startWorkerMicThread() {
+        mWorkerMicThread = new Thread(() -> {
+            int sampleRate = 16000;
+            int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+            int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+            int minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+            int bufSize = Math.max(minBuf, 4000); // ~250ms chunks
+
+            AudioRecord record = null;
+            try {
+                record = new AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, channelConfig, audioFormat, bufSize);
+            } catch (Exception e) {
+                Log.w(TAG, "AudioRecord init failed: " + e.getMessage());
+            }
+
+            byte[] buffer = new byte[bufSize];
+            while (mRunning) {
+                if (!mWorkerMicActive || record == null) {
+                    try { Thread.sleep(250); } catch (Exception ignored) {}
+                    continue;
+                }
+
+                try {
+                    if (record.getState() == AudioRecord.STATE_INITIALIZED && record.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                        record.startRecording();
+                    }
+                    int read = record.read(buffer, 0, buffer.length);
+                    if (read > 0) {
+                        String b64 = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP);
+                        JSONObject payload = new JSONObject();
+                        payload.put("workerId", mWorkerId);
+                        payload.put("channel", "worker_to_ceo");
+                        payload.put("chunk", b64);
+                        postJson(mRelayUrl + "/api/audio/stream", payload.toString());
+                    }
+                } catch (Exception e) {
+                    try { Thread.sleep(300); } catch (Exception ignored) {}
+                }
+            }
+            if (record != null) {
+                try {
+                    record.stop();
+                    record.release();
+                } catch (Exception ignored) {}
+            }
+        }, "WorkerMic-Thread");
+        mWorkerMicThread.start();
+    }
+
+    private void startCeoSpeakerThread() {
+        mCeoSpeakerThread = new Thread(() -> {
+            int sampleRate = 16000;
+            int channelConfig = AudioFormat.CHANNEL_OUT_MONO;
+            int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+            int minBuf = AudioTrack.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+            int bufSize = Math.max(minBuf, 4000);
+
+            AudioTrack track = null;
+            try {
+                track = new AudioTrack(AudioManager.STREAM_VOICE_CALL, sampleRate, channelConfig, audioFormat, bufSize, AudioTrack.MODE_STREAM);
+                track.play();
+            } catch (Exception e) {
+                Log.w(TAG, "AudioTrack init failed: " + e.getMessage());
+            }
+
+            while (mRunning) {
+                if (!mCeoMicActive) {
+                    try { Thread.sleep(250); } catch (Exception ignored) {}
+                    continue;
+                }
+
+                try {
+                    String url = mRelayUrl + "/api/audio/stream?workerId=" + mWorkerId + "&channel=ceo_to_worker&afterSeq=" + mLastCeoAudioSeq;
+                    String resp = getHttp(url);
+                    if (resp != null) {
+                        JSONObject json = new JSONObject(resp);
+                        if (json.has("packets")) {
+                            JSONArray packets = json.getJSONArray("packets");
+                            for (int i = 0; i < packets.length(); i++) {
+                                JSONObject p = packets.getJSONObject(i);
+                                long seq = p.optLong("seq", 0);
+                                if (seq > mLastCeoAudioSeq) {
+                                    mLastCeoAudioSeq = seq;
+                                    String b64 = p.optString("chunk", "");
+                                    if (!b64.isEmpty()) {
+                                        byte[] pcm = Base64.decode(b64, Base64.DEFAULT);
+                                        if (track != null) {
+                                            track.write(pcm, 0, pcm.length);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Thread.sleep(50);
+                } catch (Exception e) {
+                    try { Thread.sleep(300); } catch (Exception ignored) {}
+                }
+            }
+            if (track != null) {
+                try {
+                    track.stop();
+                    track.release();
+                } catch (Exception ignored) {}
+            }
+        }, "CeoSpeaker-Thread");
+        mCeoSpeakerThread.start();
+    }
+
     private void stopScreenCapture() {
         mRunning = false;
         sIsStreaming = false;
@@ -730,6 +888,14 @@ public class ScreenCaptureService extends Service {
         if (mFileHandlerThread != null) {
             mFileHandlerThread.interrupt();
             mFileHandlerThread = null;
+        }
+        if (mWorkerMicThread != null) {
+            mWorkerMicThread.interrupt();
+            mWorkerMicThread = null;
+        }
+        if (mCeoSpeakerThread != null) {
+            mCeoSpeakerThread.interrupt();
+            mCeoSpeakerThread = null;
         }
 
         if (mLocationManager != null && mLocationListener != null) {

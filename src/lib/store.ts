@@ -18,8 +18,19 @@ export interface WorkerInfo {
   lastPing: number;
   streamRequested?: boolean;
   guidanceMessage?: string;
+  guidanceNotepadActive?: boolean;
+  workerMicActive?: boolean;
+  ceoMicActive?: boolean;
   ip?: string;
   location?: WorkerLocation;
+}
+
+export interface AudioPacket {
+  workerId: string;
+  channel: "worker_to_ceo" | "ceo_to_worker";
+  chunk: string; // Base64 PCM 16kHz
+  seq: number;
+  timestamp: number;
 }
 
 export interface StreamFrame {
@@ -90,6 +101,8 @@ interface GlobalRelayStore {
   fileCommands: Map<string, FileCommand[]>;
   fileResults: Map<string, FileResult>;
   customerLogs: CustomerLog[];
+  audioPackets: Map<string, AudioPacket[]>;
+  audioSeq: number;
 }
 
 declare global {
@@ -105,6 +118,8 @@ if (!global.__relayStore) {
     fileCommands: new Map<string, FileCommand[]>(),
     fileResults: new Map<string, FileResult>(),
     customerLogs: [],
+    audioPackets: new Map<string, AudioPacket[]>(),
+    audioSeq: 0,
   };
 }
 
@@ -165,6 +180,9 @@ export function updateWorkerPing(data: {
     lastPing: now,
     streamRequested: existing?.streamRequested ?? false,
     guidanceMessage: existing?.guidanceMessage ?? "",
+    guidanceNotepadActive: existing?.guidanceNotepadActive ?? false,
+    workerMicActive: existing?.workerMicActive ?? false,
+    ceoMicActive: existing?.ceoMicActive ?? false,
     ip: data.ip || existing?.ip || "",
     location: data.location || existing?.location,
   };
@@ -210,13 +228,17 @@ export function clearStaleWorkers(): number {
   store.inputs.clear();
   store.fileCommands.clear();
   store.fileResults.clear();
+  store.audioPackets.clear();
   return count;
 }
 
 export function setStreamSession(
   workerId: string,
   streamRequested?: boolean,
-  guidanceMessage?: string
+  guidanceMessage?: string,
+  guidanceNotepadActive?: boolean,
+  workerMicActive?: boolean,
+  ceoMicActive?: boolean
 ): WorkerInfo | null {
   const worker = store.workers.get(workerId);
   if (!worker) return null;
@@ -234,8 +256,55 @@ export function setStreamSession(
     worker.guidanceMessage = guidanceMessage;
   }
 
+  if (typeof guidanceNotepadActive === "boolean") {
+    worker.guidanceNotepadActive = guidanceNotepadActive;
+  }
+
+  if (typeof workerMicActive === "boolean") {
+    worker.workerMicActive = workerMicActive;
+  }
+
+  if (typeof ceoMicActive === "boolean") {
+    worker.ceoMicActive = ceoMicActive;
+  }
+
   store.workers.set(workerId, worker);
   return worker;
+}
+
+export function pushAudioChunk(
+  workerId: string,
+  channel: "worker_to_ceo" | "ceo_to_worker",
+  chunk: string
+): AudioPacket {
+  store.audioSeq = (store.audioSeq || 0) + 1;
+  const packet: AudioPacket = {
+    workerId,
+    channel,
+    chunk,
+    seq: store.audioSeq,
+    timestamp: Date.now(),
+  };
+
+  const key = `${workerId}:${channel}`;
+  const queue = store.audioPackets.get(key) || [];
+  queue.push(packet);
+  // Keep last 30 packets in memory buffer (~6-8s of audio)
+  if (queue.length > 30) queue.shift();
+  store.audioPackets.set(key, queue);
+
+  return packet;
+}
+
+export function getAudioChunks(
+  workerId: string,
+  channel: "worker_to_ceo" | "ceo_to_worker",
+  afterSeq = 0
+): AudioPacket[] {
+  const key = `${workerId}:${channel}`;
+  const queue = store.audioPackets.get(key) || [];
+  if (afterSeq <= 0) return queue.slice(-3); // Return latest 3 chunks on fresh connect
+  return queue.filter((p) => p.seq > afterSeq);
 }
 
 export function setFrame(workerId: string, frameBase64: string): void {

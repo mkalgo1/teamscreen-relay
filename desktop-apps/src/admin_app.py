@@ -1695,6 +1695,15 @@ class CEOAdminApp(ctk.CTk):
                 text_color="#10B981"
             )
 
+            # If opened via "View" button, automatically launch default viewer without extra prompt
+            if getattr(self, "auto_open_downloaded_file", False):
+                self.auto_open_downloaded_file = False
+                try:
+                    os.startfile(save_path)
+                except Exception as e:
+                    messagebox.showerror("View Error", f"Could not launch file: {e}")
+                return
+
             # Prompt to open automatically
             ask_open = messagebox.askyesno(
                 "File Downloaded",
@@ -1708,6 +1717,42 @@ class CEOAdminApp(ctk.CTk):
 
         except Exception as e:
             messagebox.showerror("Download Error", f"Failed to save file: {e}")
+
+    def open_folder_direct(self, folder_name):
+        """Navigates into clicked folder on worker's PC"""
+        full_path = os.path.join(self.worker_current_path, folder_name)
+        self.request_browse_folder(full_path)
+
+    def download_and_view_direct(self, file_name):
+        """Downloads file and opens it in default viewer on CEO PC"""
+        if not self.selected_worker_id:
+            return
+        full_path = os.path.join(self.worker_current_path, file_name)
+        self.fm_status_lbl.configure(text=f"Fetching '{file_name}' for viewing...", text_color="#38BDF8")
+        self.auto_open_downloaded_file = True
+        self.download_file_direct(full_path, file_name)
+
+    def delete_item_direct(self, name, is_dir):
+        """Prompts confirmation and permanently deletes file or folder on worker's PC"""
+        if not self.selected_worker_id:
+            messagebox.showinfo("Select Worker", "Please select an active worker first.")
+            return
+
+        full_path = os.path.join(self.worker_current_path, name)
+        item_type = "folder and all its contents" if is_dir else "file"
+
+        confirm = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to permanently delete this {item_type} on the worker's computer?\n\n{name}\n\nPath: {full_path}"
+        )
+        if confirm:
+            payload = {
+                "workerId": self.selected_worker_id,
+                "action": "delete",
+                "path": full_path
+            }
+            self.fm_status_lbl.configure(text=f"Deleting '{name}' from worker PC...", text_color="#F87171")
+            threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
 
     def update_files_ui(self, current_path, items, status_msg=""):
         self.worker_current_path = current_path
@@ -1756,6 +1801,7 @@ class CEOAdminApp(ctk.CTk):
             row = ctk.CTkFrame(self.files_scroll, fg_color="#1E293B", corner_radius=6, cursor="hand2")
             row.pack(fill="x", pady=2, padx=4)
 
+            # Left side: Icon + Name
             btn_text = f"{icon}  {name}"
             lbl = ctk.CTkLabel(
                 row,
@@ -1763,10 +1809,60 @@ class CEOAdminApp(ctk.CTk):
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold" if is_dir else "normal"),
                 text_color="#F8FAFC" if is_dir else "#CBD5E1"
             )
-            lbl.pack(side="left", padx=10, pady=7)
+            lbl.pack(side="left", padx=10, pady=6)
 
-            size_lbl = ctk.CTkLabel(row, text=size_str, font=ctk.CTkFont(size=11), text_color="#64748B")
-            size_lbl.pack(side="right", padx=12)
+            # Right side actions: [Delete Button] [View / Open Button] [Size]
+            del_btn = ctk.CTkButton(
+                row,
+                text="🗑️ Delete",
+                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                fg_color="#7F1D1D",
+                hover_color="#991B1B",
+                text_color="#FECACA",
+                width=76,
+                height=26,
+                corner_radius=4,
+                command=lambda nm=name, d=is_dir: self.delete_item_direct(nm, d)
+            )
+            del_btn.pack(side="right", padx=(4, 8), pady=5)
+
+            if is_dir:
+                view_btn = ctk.CTkButton(
+                    row,
+                    text="📂 Open",
+                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                    fg_color="#1E3A8A",
+                    hover_color="#1D4ED8",
+                    text_color="#BFDBFE",
+                    width=74,
+                    height=26,
+                    corner_radius=4,
+                    command=lambda nm=name: self.open_folder_direct(nm)
+                )
+            else:
+                view_btn = ctk.CTkButton(
+                    row,
+                    text="👁️ View",
+                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                    fg_color="#065F46",
+                    hover_color="#059669",
+                    text_color="#A7F3D0",
+                    width=74,
+                    height=26,
+                    corner_radius=4,
+                    command=lambda nm=name: self.download_and_view_direct(nm)
+                )
+            view_btn.pack(side="right", padx=4, pady=5)
+
+            size_lbl = ctk.CTkLabel(
+                row,
+                text=size_str,
+                font=ctk.CTkFont(size=11),
+                text_color="#64748B",
+                width=65,
+                anchor="e"
+            )
+            size_lbl.pack(side="right", padx=(8, 10), pady=5)
 
             # Bind single click to select and double click to enter or open
             row.bind("<Button-1>", lambda e, it=item, r=row: self.select_file_item(it, r))

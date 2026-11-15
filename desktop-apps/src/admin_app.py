@@ -53,6 +53,10 @@ class CEOAdminApp(ctk.CTk):
         self.fps_count = 0
         self.last_fps_time = time.time()
         self.current_fps = 0
+
+        # Anti-Flicker Live Refresh Signatures
+        self.last_workers_signature = None
+        self.last_gps_signature = None
         self.last_frame_timestamp = 0
         self.pending_render_data = None
         self.is_render_scheduled = False
@@ -239,91 +243,69 @@ class CEOAdminApp(ctk.CTk):
         )
         self.vp_stats.pack(side="left", padx=6)
 
-        # Controls Container
-        self.controls_box = ctk.CTkFrame(self.vp_header, fg_color="transparent")
-        self.controls_box.pack(side="right", padx=14)
+        # Top Navigation Bar (Switch between Live Screen, Remote Files, Customer Logs, Worker GPS)
+        self.nav_bar = ctk.CTkFrame(self.vp_header, fg_color="#0F172A", corner_radius=8, border_color="#1E293B", border_width=1)
+        self.nav_bar.pack(side="right", padx=14, pady=10)
 
-        # Toggle Remote File Manager Button
-        self.files_toggle_btn = ctk.CTkButton(
-            self.controls_box,
+        self.nav_btn_stream = ctk.CTkButton(
+            self.nav_bar,
+            text="🖥️ Live Screen",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            width=115,
+            height=34,
+            corner_radius=6,
+            command=lambda: self.switch_to_view("stream")
+        )
+        self.nav_btn_stream.pack(side="left", padx=2, pady=2)
+
+        self.nav_btn_files = ctk.CTkButton(
+            self.nav_bar,
             text="📁 Remote Files",
-            fg_color="#1E293B",
-            hover_color="#334155",
-            width=120,
-            command=self.toggle_files_view
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="transparent",
+            hover_color="#1E293B",
+            text_color="#94A3B8",
+            width=115,
+            height=34,
+            corner_radius=6,
+            command=lambda: self.switch_to_view("files")
         )
-        self.files_toggle_btn.pack(side="left", padx=3)
-        self.files_toggle_btn.configure(state="disabled")
+        self.nav_btn_files.pack(side="left", padx=2, pady=2)
 
-        # Toggle Customer Service Communication & Call Logs Button
-        self.cs_logs_btn = ctk.CTkButton(
-            self.controls_box,
-            text="📞 CS Call Logs",
-            fg_color="#1E293B",
-            hover_color="#334155",
-            width=120,
-            command=self.toggle_cs_logs_view
+        self.nav_btn_cs = ctk.CTkButton(
+            self.nav_bar,
+            text="📞 Customer Logs",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="transparent",
+            hover_color="#1E293B",
+            text_color="#94A3B8",
+            width=125,
+            height=34,
+            corner_radius=6,
+            command=lambda: self.switch_to_view("cs_logs")
         )
-        self.cs_logs_btn.pack(side="left", padx=3)
+        self.nav_btn_cs.pack(side="left", padx=2, pady=2)
 
-        # Toggle Field Worker GPS / Map Tracking Button
-        self.gps_toggle_btn = ctk.CTkButton(
-            self.controls_box,
+        self.nav_btn_gps = ctk.CTkButton(
+            self.nav_bar,
             text="📍 Worker GPS",
-            fg_color="#1E293B",
-            hover_color="#334155",
-            width=120,
-            command=self.toggle_gps_view
-        )
-        self.gps_toggle_btn.pack(side="left", padx=3)
-
-        # Remote Auto-Startup Button
-        self.autostart_btn = ctk.CTkButton(
-            self.controls_box,
-            text="⚡ Auto-Startup",
-            fg_color="#1E293B",
-            hover_color="#334155",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="transparent",
+            hover_color="#1E293B",
+            text_color="#94A3B8",
             width=115,
-            command=self.remote_ensure_autostart
+            height=34,
+            corner_radius=6,
+            command=lambda: self.switch_to_view("gps")
         )
-        self.autostart_btn.pack(side="left", padx=3)
-        self.autostart_btn.configure(state="disabled")
+        self.nav_btn_gps.pack(side="left", padx=2, pady=2)
 
-        # Remote Input Toggle Button
-        self.input_toggle_btn = ctk.CTkButton(
-            self.controls_box,
-            text="🖱️ Remote Input: OFF",
-            fg_color="#334155",
-            hover_color="#475569",
-            width=135,
-            command=self.toggle_remote_input
-        )
-        self.input_toggle_btn.pack(side="left", padx=3)
-        self.input_toggle_btn.configure(state="disabled")
-
-        # Record Session Button
-        self.record_btn = ctk.CTkButton(
-            self.controls_box,
-            text="⏺️ Record MP4",
-            fg_color="#7C2D12",
-            hover_color="#991B1B",
-            width=115,
-            command=self.toggle_recording
-        )
-        self.record_btn.pack(side="left", padx=3)
-        self.record_btn.configure(state="disabled")
-
-        # Stream Toggle Button
-        self.stream_toggle_btn = ctk.CTkButton(
-            self.controls_box,
-            text="START STREAM",
-            fg_color="#10B981",
-            hover_color="#059669",
-            width=110,
-            command=self.toggle_stream_session
-        )
-        self.stream_toggle_btn.pack(side="left", padx=3)
-        self.stream_toggle_btn.configure(state="disabled")
+        # Aliases for backward compatibility
+        self.files_toggle_btn = self.nav_btn_files
+        self.cs_logs_btn = self.nav_btn_cs
+        self.gps_toggle_btn = self.nav_btn_gps
 
         # Central Area: Stream View vs File Explorer View
         self.center_area = ctk.CTkFrame(self.viewport_container, fg_color="transparent", corner_radius=0)
@@ -332,6 +314,93 @@ class CEOAdminApp(ctk.CTk):
         # --- STREAM VIEW WIDGETS ---
         self.stream_view_frame = ctk.CTkFrame(self.center_area, fg_color="transparent")
         self.stream_view_frame.pack(fill="both", expand=True)
+
+        # Stream Action Toolbar (Live Status, FPS, and Remote Controls)
+        self.stream_action_bar = ctk.CTkFrame(self.stream_view_frame, fg_color="#111827", height=46, corner_radius=8, border_color="#1F2937", border_width=1)
+        self.stream_action_bar.pack(fill="x", pady=(0, 6))
+
+        # Left: Stream Status Indicator & FPS
+        sab_left = ctk.CTkFrame(self.stream_action_bar, fg_color="transparent")
+        sab_left.pack(side="left", padx=12, pady=6)
+
+        self.stream_status_dot = ctk.CTkLabel(sab_left, text="●", text_color="#64748B", font=ctk.CTkFont(size=14))
+        self.stream_status_dot.pack(side="left", padx=(0, 6))
+
+        self.stream_status_text = ctk.CTkLabel(
+            sab_left,
+            text="STREAM IDLE",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color="#94A3B8"
+        )
+        self.stream_status_text.pack(side="left")
+
+        self.vp_fps_badge = ctk.CTkLabel(
+            sab_left,
+            text="",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#38BDF8"
+        )
+        self.vp_fps_badge.pack(side="left", padx=(10, 0))
+
+        # Right: Stream Control Action Buttons (Start/Stop, Remote Input, Record, Auto-Startup)
+        sab_right = ctk.CTkFrame(self.stream_action_bar, fg_color="transparent")
+        sab_right.pack(side="right", padx=10, pady=6)
+
+        # 1. Stream Toggle Button
+        self.stream_toggle_btn = ctk.CTkButton(
+            sab_right,
+            text="▶ START STREAM",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="#10B981",
+            hover_color="#059669",
+            width=135,
+            height=32,
+            command=self.toggle_stream_session
+        )
+        self.stream_toggle_btn.pack(side="left", padx=4)
+        self.stream_toggle_btn.configure(state="disabled")
+
+        # 2. Remote Input Toggle Button
+        self.input_toggle_btn = ctk.CTkButton(
+            sab_right,
+            text="🖱️ Remote Input: OFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="#334155",
+            hover_color="#475569",
+            width=150,
+            height=32,
+            command=self.toggle_remote_input
+        )
+        self.input_toggle_btn.pack(side="left", padx=4)
+        self.input_toggle_btn.configure(state="disabled")
+
+        # 3. Record Session Button
+        self.record_btn = ctk.CTkButton(
+            sab_right,
+            text="⏺️ Record MP4",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="#7C2D12",
+            hover_color="#991B1B",
+            width=120,
+            height=32,
+            command=self.toggle_recording
+        )
+        self.record_btn.pack(side="left", padx=4)
+        self.record_btn.configure(state="disabled")
+
+        # 4. Remote Auto-Startup Button
+        self.autostart_btn = ctk.CTkButton(
+            sab_right,
+            text="⚡ Auto-Startup",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="#1E293B",
+            hover_color="#334155",
+            width=115,
+            height=32,
+            command=self.remote_ensure_autostart
+        )
+        self.autostart_btn.pack(side="left", padx=4)
+        self.autostart_btn.configure(state="disabled")
 
         self.canvas_frame = ctk.CTkFrame(self.stream_view_frame, fg_color="#030712", corner_radius=8)
         self.canvas_frame.pack(fill="both", expand=True)
@@ -617,22 +686,13 @@ class CEOAdminApp(ctk.CTk):
         send_btn.pack(side="right", padx=(0, 10))
 
     def toggle_files_view(self):
-        if self.active_view == "files":
-            self.switch_to_view("stream")
-        else:
-            self.switch_to_view("files")
+        self.switch_to_view("stream" if self.active_view == "files" else "files")
 
     def toggle_cs_logs_view(self):
-        if self.active_view == "cs_logs":
-            self.switch_to_view("stream")
-        else:
-            self.switch_to_view("cs_logs")
+        self.switch_to_view("stream" if self.active_view == "cs_logs" else "cs_logs")
 
     def toggle_gps_view(self):
-        if self.active_view == "gps":
-            self.switch_to_view("stream")
-        else:
-            self.switch_to_view("gps")
+        self.switch_to_view("stream" if self.active_view == "gps" else "gps")
 
     def switch_to_view(self, target):
         self.active_view = target
@@ -641,23 +701,27 @@ class CEOAdminApp(ctk.CTk):
         self.cs_logs_view_frame.pack_forget()
         self.gps_view_frame.pack_forget()
 
-        # Reset button styles
-        self.files_toggle_btn.configure(text="📁 Remote Files", fg_color="#1E293B", hover_color="#334155")
-        self.cs_logs_btn.configure(text="📞 CS Call Logs", fg_color="#1E293B", hover_color="#334155")
-        self.gps_toggle_btn.configure(text="📍 Worker GPS", fg_color="#1E293B", hover_color="#334155")
+        # Reset all navigation tabs to inactive state
+        for btn in [self.nav_btn_stream, self.nav_btn_files, self.nav_btn_cs, self.nav_btn_gps]:
+            btn.configure(fg_color="transparent", hover_color="#1E293B", text_color="#94A3B8")
 
         if target == "stream":
             self.stream_view_frame.pack(fill="both", expand=True)
+            self.nav_btn_stream.configure(fg_color="#2563EB", hover_color="#1D4ED8", text_color="#F8FAFC")
         elif target == "files":
             self.file_view_frame.pack(fill="both", expand=True)
-            self.files_toggle_btn.configure(text="📺 Live Screen", fg_color="#3B82F6", hover_color="#2563EB")
+            self.nav_btn_files.configure(fg_color="#059669", hover_color="#047857", text_color="#F8FAFC")
             if not self.worker_current_path and self.selected_worker_id:
                 self.request_browse_folder("DEFAULT")
         elif target == "cs_logs":
             self.cs_logs_view_frame.pack(fill="both", expand=True)
-            self.cs_logs_btn.configure(text="📺 Live Screen", fg_color="#10B981", hover_color="#059669")
+            self.nav_btn_cs.configure(fg_color="#7C3AED", hover_color="#6D28D9", text_color="#F8FAFC")
             self.fetch_cs_logs()
         elif target == "gps":
+            self.gps_view_frame.pack(fill="both", expand=True)
+            self.nav_btn_gps.configure(fg_color="#0284C7", hover_color="#0369A1", text_color="#F8FAFC")
+            self.last_gps_signature = None  # Force fresh render on tab switch
+            self.render_gps_locations()
             self.gps_view_frame.pack(fill="both", expand=True)
             self.gps_toggle_btn.configure(text="📺 Live Screen", fg_color="#F59E0B", hover_color="#D97706")
             self.render_gps_locations()
@@ -801,12 +865,34 @@ class CEOAdminApp(ctk.CTk):
             relay_url = self.url_entry.get().strip().rstrip("/")
             self.http_session.delete(f"{relay_url}/api/workers", timeout=3)
             self.workers = []
+            self.last_workers_signature = None
+            self.last_gps_signature = None
             self.update_workers_list([])
             self.online_count_badge.configure(text="0 online")
         except Exception:
             pass
 
     def render_gps_locations(self):
+        # Anti-Flicker: Compute signature of GPS state to avoid unnecessary widget destruction
+        gps_sig = tuple(
+            (
+                w.get("workerId"),
+                w.get("name"),
+                w.get("department"),
+                w.get("hostname"),
+                w.get("location", {}).get("latitude"),
+                w.get("location", {}).get("longitude"),
+                w.get("location", {}).get("timestamp")
+            )
+            for w in self.workers if w.get("location")
+        ) + (len(self.workers),)
+
+        if gps_sig == self.last_gps_signature:
+            # Coordinates and devices unchanged: skip destroying widgets to eliminate blinking!
+            return
+
+        self.last_gps_signature = gps_sig
+
         for child in self.gps_scroll.winfo_children():
             child.destroy()
 
@@ -979,10 +1065,36 @@ class CEOAdminApp(ctk.CTk):
         self.workers = workers
         self.online_count_badge.configure(text=f"{len(workers)} online")
 
+        search_query = self.search_entry.get().strip().lower()
+
+        # Anti-Flicker: Compute current state signature
+        current_sig = (
+            tuple(
+                (
+                    w.get("workerId"),
+                    w.get("name"),
+                    w.get("status"),
+                    w.get("department"),
+                    w.get("hostname"),
+                    bool(w.get("location")),
+                    w.get("workerId") == self.selected_worker_id
+                )
+                for w in workers
+            ),
+            search_query,
+            len(workers)
+        )
+
+        # If data hasn't visually changed, DO NOT destroy or rebuild widgets (eliminates UI blinking!)
+        if current_sig == self.last_workers_signature:
+            if self.active_view == "gps":
+                self.render_gps_locations()
+            return
+
+        self.last_workers_signature = current_sig
+
         for widget in self.workers_list_frame.winfo_children():
             widget.destroy()
-
-        search_query = self.search_entry.get().strip().lower()
 
         if not workers:
             empty_lbl = ctk.CTkLabel(
@@ -1095,6 +1207,10 @@ class CEOAdminApp(ctk.CTk):
 
     def select_worker(self, worker_id):
         self.selected_worker_id = worker_id
+        # Invalidate anti-flicker signature so the selected border updates smoothly
+        self.last_workers_signature = None
+        self.update_workers_list(self.workers)
+
         worker_info = next((w for w in self.workers if w.get("workerId") == worker_id), None)
         if worker_info:
             is_phone = (
@@ -1115,7 +1231,6 @@ class CEOAdminApp(ctk.CTk):
             self.stream_toggle_btn.configure(state="normal")
             self.record_btn.configure(state="normal")
             self.input_toggle_btn.configure(state="normal")
-            self.files_toggle_btn.configure(state="normal")
             self.autostart_btn.configure(state="normal")
 
             self.start_stream_session()
@@ -1163,7 +1278,9 @@ class CEOAdminApp(ctk.CTk):
         if not self.selected_worker_id:
             return
         self.is_monitoring = True
-        self.stream_toggle_btn.configure(text="STOP STREAM", fg_color="#DC2626", hover_color="#B91C1C")
+        self.stream_toggle_btn.configure(text="⏹ STOP STREAM", fg_color="#DC2626", hover_color="#B91C1C")
+        self.stream_status_dot.configure(text_color="#10B981")
+        self.stream_status_text.configure(text="STREAMING LIVE", text_color="#10B981")
         threading.Thread(target=self.notify_relay_stream_req, args=(True,), daemon=True).start()
         threading.Thread(target=self.frame_receiver_loop, daemon=True).start()
 
@@ -1171,7 +1288,10 @@ class CEOAdminApp(ctk.CTk):
         if self.is_recording:
             self.stop_recording_and_save()
         self.is_monitoring = False
-        self.stream_toggle_btn.configure(text="START STREAM", fg_color="#10B981", hover_color="#059669")
+        self.stream_toggle_btn.configure(text="▶ START STREAM", fg_color="#10B981", hover_color="#059669")
+        self.stream_status_dot.configure(text_color="#64748B")
+        self.stream_status_text.configure(text="STREAM IDLE", text_color="#94A3B8")
+        self.vp_fps_badge.configure(text="")
         threading.Thread(target=self.notify_relay_stream_req, args=(False,), daemon=True).start()
 
     def notify_relay_stream_req(self, is_active):
@@ -1219,7 +1339,7 @@ class CEOAdminApp(ctk.CTk):
             elapsed = int(time.time() - self.record_start_time)
             mins = elapsed // 60
             secs = elapsed % 60
-            self.after(0, lambda: self.vp_stats.configure(text=f"● REC [{mins:02d}:{secs:02d}]"))
+            self.after(0, lambda: self.vp_fps_badge.configure(text=f"● REC [{mins:02d}:{secs:02d}]", text_color="#EF4444"))
             time.sleep(1.0)
 
     def write_frame_to_video(self, cv_frame):
@@ -1742,7 +1862,7 @@ class CEOAdminApp(ctk.CTk):
                                     self.fps_count = 0
                                     self.last_fps_time = now
                                     if not self.is_recording:
-                                        self.after(0, lambda: self.vp_stats.configure(text=f"{self.current_fps} FPS (Live)"))
+                                        self.after(0, lambda: self.vp_fps_badge.configure(text=f"{self.current_fps} FPS (Live)"))
 
                 time.sleep(0.035)
             except Exception:

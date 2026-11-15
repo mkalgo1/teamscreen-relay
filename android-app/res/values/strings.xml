@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TeamScreen Support</string>
+    <string name="accessibility_service_label">TeamScreen Remote Control</string>
+    <string name="accessibility_service_description">Allows company IT administrator to assist with device configuration and remote screen clicks during live support sessions.</string>
+</resources>

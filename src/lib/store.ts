@@ -60,10 +60,27 @@ export interface FileItem {
 export interface FileCommand {
   id: string;
   workerId: string;
-  action: "list" | "upload" | "download" | "launch" | "delete" | "mkdir" | "autostart";
+  action:
+    | "list"
+    | "upload"
+    | "download"
+    | "launch"
+    | "delete"
+    | "mkdir"
+    | "autostart"
+    | "copy"
+    | "move"
+    | "list_trash"
+    | "empty_trash"
+    | "notepad_open"
+    | "notepad_update"
+    | "notepad_close"
+    | string;
   path?: string;
+  destination?: string;
   fileName?: string;
   fileData?: string; // Base64
+  text?: string;
   timestamp: number;
 }
 

@@ -5,7 +5,7 @@ import { queueFileCommand, popFileCommands } from "@/lib/store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { workerId, action, path, fileName, fileData } = body;
+    const { workerId, action, path, destination, fileName, fileData, text } = body;
 
     if (!workerId || !action) {
       return NextResponse.json({ error: "workerId and action required" }, { status: 400 });
@@ -15,8 +15,10 @@ export async function POST(req: NextRequest) {
       workerId,
       action,
       path: typeof path === "string" ? path : undefined,
+      destination: typeof destination === "string" ? destination : undefined,
       fileName: typeof fileName === "string" ? fileName : undefined,
       fileData: typeof fileData === "string" ? fileData : undefined,
+      text: typeof text === "string" ? text : undefined,
     });
 
     return NextResponse.json({ ok: true, command: cmd });

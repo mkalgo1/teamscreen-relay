@@ -84,6 +84,8 @@ class CEOAdminApp(ctk.CTk):
         self.selected_file_item = None
         self.last_file_sync_time = 0
         self.cached_cs_logs = []
+        self.file_clipboard = None # {"path": str, "name": str, "op": "copy" | "cut", "isDir": bool}
+        self._guidance_typing_timer = None
 
         # Live Interactive Notepad Guidance State
         self.live_notepad_active = False
@@ -494,61 +496,105 @@ class CEOAdminApp(ctk.CTk):
         downloads_btn.pack(side="left", padx=2)
 
         c_drive_btn = ctk.CTkButton(fm_nav_top, text="C:\\", width=45, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("C:\\"))
-        c_drive_btn.pack(side="left", padx=(2, 6))
+        c_drive_btn.pack(side="left", padx=2)
 
-        # File Action Toolbar (Upload, Download/Open, Launch on Worker, Delete, New Folder)
+        trash_jump_btn = ctk.CTkButton(fm_nav_top, text="🗑️ Recycle Bin", width=105, fg_color="#7F1D1D", hover_color="#991B1B", command=self.browse_recycle_bin)
+        trash_jump_btn.pack(side="left", padx=(2, 6))
+
+        # File Action Toolbar (Upload, Download/Open, Launch on Worker, Copy, Cut, Paste, Delete, Trash)
         fm_actions_bar = ctk.CTkFrame(self.file_view_frame, fg_color="#131B2E", height=44, corner_radius=6)
         fm_actions_bar.pack(fill="x", padx=12, pady=(0, 6))
 
         upload_btn = ctk.CTkButton(
             fm_actions_bar,
-            text="📤 Upload File / Invoice",
+            text="📤 Upload",
             fg_color="#10B981",
             hover_color="#059669",
-            width=165,
+            width=90,
             command=self.send_file_to_worker
         )
-        upload_btn.pack(side="left", padx=6, pady=6)
+        upload_btn.pack(side="left", padx=4, pady=6)
 
         self.download_btn = ctk.CTkButton(
             fm_actions_bar,
-            text="📥 Download & Open File",
+            text="📥 Download",
             fg_color="#3B82F6",
             hover_color="#2563EB",
-            width=165,
+            width=100,
             command=self.download_selected_file
         )
-        self.download_btn.pack(side="left", padx=4, pady=6)
+        self.download_btn.pack(side="left", padx=3, pady=6)
 
         self.launch_btn = ctk.CTkButton(
             fm_actions_bar,
-            text="🖥️ Launch on Worker PC",
+            text="🖥️ Launch",
             fg_color="#8B5CF6",
             hover_color="#7C3AED",
-            width=165,
+            width=85,
             command=self.launch_selected_file_on_worker
         )
-        self.launch_btn.pack(side="left", padx=4, pady=6)
+        self.launch_btn.pack(side="left", padx=3, pady=6)
 
         new_folder_btn = ctk.CTkButton(
             fm_actions_bar,
             text="📁 New Folder",
             fg_color="#334155",
             hover_color="#475569",
-            width=100,
+            width=95,
             command=self.create_remote_folder
         )
-        new_folder_btn.pack(side="left", padx=4, pady=6)
+        new_folder_btn.pack(side="left", padx=3, pady=6)
+
+        self.copy_btn = ctk.CTkButton(
+            fm_actions_bar,
+            text="📋 Copy",
+            fg_color="#334155",
+            hover_color="#475569",
+            width=70,
+            command=self.copy_selected_item
+        )
+        self.copy_btn.pack(side="left", padx=3, pady=6)
+
+        self.cut_btn = ctk.CTkButton(
+            fm_actions_bar,
+            text="✂️ Cut",
+            fg_color="#334155",
+            hover_color="#475569",
+            width=65,
+            command=self.cut_selected_item
+        )
+        self.cut_btn.pack(side="left", padx=3, pady=6)
+
+        self.paste_btn = ctk.CTkButton(
+            fm_actions_bar,
+            text="📌 Paste",
+            fg_color="#1E293B",
+            hover_color="#0D9488",
+            width=75,
+            state="disabled",
+            command=self.paste_item
+        )
+        self.paste_btn.pack(side="left", padx=3, pady=6)
 
         self.delete_btn = ctk.CTkButton(
             fm_actions_bar,
             text="🗑️ Delete",
             fg_color="#7F1D1D",
             hover_color="#991B1B",
-            width=85,
+            width=75,
             command=self.delete_selected_item
         )
-        self.delete_btn.pack(side="left", padx=4, pady=6)
+        self.delete_btn.pack(side="left", padx=3, pady=6)
+
+        self.empty_trash_btn = ctk.CTkButton(
+            fm_actions_bar,
+            text="🧹 Empty Trash",
+            fg_color="#991B1B",
+            hover_color="#7F1D1D",
+            width=105,
+            command=self.empty_recycle_bin
+        )
+        self.empty_trash_btn.pack(side="left", padx=4, pady=6)
 
         self.fm_status_lbl = ctk.CTkLabel(
             fm_actions_bar,
@@ -1714,6 +1760,21 @@ class CEOAdminApp(ctk.CTk):
         except Exception:
             pass
 
+    def send_file_command(self, action, path="", destination="", fileName="", fileData="", text=""):
+        """Sends a high-priority file or guidance control command to worker"""
+        if not self.selected_worker_id:
+            return
+        payload = {
+            "workerId": self.selected_worker_id,
+            "action": action,
+            "path": path,
+            "destination": destination,
+            "fileName": fileName,
+            "fileData": fileData,
+            "text": text
+        }
+        threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
     def file_result_poll_loop(self):
         """High-frequency poller for directory listings, downloads, and operation confirmations"""
         while not self.stop_event.is_set():
@@ -1739,7 +1800,7 @@ class CEOAdminApp(ctk.CTk):
                                 # Check if a downloaded file arrived
                                 if action == "download" and file_data and file_name:
                                     self.after(0, self.handle_received_file_download, file_name, file_data)
-                                elif action in ("list", "upload", "delete", "mkdir") or items:
+                                elif action in ("list", "upload", "delete", "mkdir", "copy", "move", "list_trash", "empty_trash") or items:
                                     self.after(0, self.update_files_ui, cur_path, items, status_msg)
                                 elif status_msg:
                                     self.after(0, lambda m=status_msg: self.fm_status_lbl.configure(text=m))
@@ -1796,8 +1857,118 @@ class CEOAdminApp(ctk.CTk):
         self.auto_open_downloaded_file = True
         self.download_file_direct(full_path, file_name)
 
+    def copy_selected_item(self):
+        """Copies currently selected file or folder to clipboard"""
+        if not self.selected_file_item:
+            messagebox.showinfo("Select Item", "Please select a file or folder from the list first.")
+            return
+        self.copy_item_direct(self.selected_file_item.get("name"), self.selected_file_item.get("isDir", False))
+
+    def copy_item_direct(self, name, is_dir):
+        """Marks file or folder for copying"""
+        full_path = os.path.join(self.worker_current_path, name)
+        self.file_clipboard = {
+            "path": full_path,
+            "name": name,
+            "op": "copy",
+            "isDir": is_dir
+        }
+        short_name = name if len(name) <= 12 else name[:10] + ".."
+        self.paste_btn.configure(
+            state="normal",
+            text=f"📌 Paste ({short_name})",
+            fg_color="#0D9488",
+            hover_color="#0F766E"
+        )
+        self.fm_status_lbl.configure(text=f"Copied '{name}'. Navigate to target folder and click Paste.", text_color="#34D399")
+
+    def cut_selected_item(self):
+        """Cuts currently selected file or folder to clipboard for moving"""
+        if not self.selected_file_item:
+            messagebox.showinfo("Select Item", "Please select a file or folder from the list first.")
+            return
+        self.cut_item_direct(self.selected_file_item.get("name"), self.selected_file_item.get("isDir", False))
+
+    def cut_item_direct(self, name, is_dir):
+        """Marks file or folder for moving (cut)"""
+        full_path = os.path.join(self.worker_current_path, name)
+        self.file_clipboard = {
+            "path": full_path,
+            "name": name,
+            "op": "cut",
+            "isDir": is_dir
+        }
+        short_name = name if len(name) <= 12 else name[:10] + ".."
+        self.paste_btn.configure(
+            state="normal",
+            text=f"📌 Paste Cut ({short_name})",
+            fg_color="#D97706",
+            hover_color="#B45309"
+        )
+        self.fm_status_lbl.configure(text=f"Cut '{name}'. Navigate to target folder and click Paste.", text_color="#FBBF24")
+
+    def paste_item(self):
+        """Pastes the copied or cut item into the currently open worker directory"""
+        if not self.file_clipboard or not self.selected_worker_id:
+            return
+
+        target_dir = self.worker_current_path
+        if target_dir == "RECYCLE_BIN":
+            messagebox.showwarning("Invalid Destination", "Cannot paste files into the Recycle Bin.")
+            return
+
+        src = self.file_clipboard.get("path")
+        name = self.file_clipboard.get("name")
+        op = self.file_clipboard.get("op", "copy")
+
+        payload = {
+            "workerId": self.selected_worker_id,
+            "action": "copy" if op == "copy" else "move",
+            "path": src,
+            "destination": target_dir
+        }
+
+        action_desc = "Copying" if op == "copy" else "Moving"
+        self.fm_status_lbl.configure(text=f"{action_desc} '{name}' to current folder...", text_color="#38BDF8")
+        threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
+        if op == "cut":
+            self.file_clipboard = None
+            self.paste_btn.configure(state="disabled", text="📌 Paste", fg_color="#1E293B")
+
+    def browse_recycle_bin(self):
+        """Navigates to the Windows Recycle Bin view on the worker PC"""
+        if not self.selected_worker_id:
+            messagebox.showinfo("Select Worker", "Please select an active worker first.")
+            return
+
+        payload = {
+            "workerId": self.selected_worker_id,
+            "action": "list_trash"
+        }
+        self.fm_status_lbl.configure(text="Querying worker's Recycle Bin...", text_color="#F87171")
+        threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
+    def empty_recycle_bin(self):
+        """Prompts confirmation and empties the Recycle Bin on the worker PC"""
+        if not self.selected_worker_id:
+            messagebox.showinfo("Select Worker", "Please select an active worker first.")
+            return
+
+        confirm = messagebox.askyesno(
+            "Empty Recycle Bin",
+            "Are you sure you want to permanently empty the Recycle Bin on the worker's PC?\n\nAll discarded files will be permanently erased and cannot be recovered."
+        )
+        if confirm:
+            payload = {
+                "workerId": self.selected_worker_id,
+                "action": "empty_trash"
+            }
+            self.fm_status_lbl.configure(text="Emptying worker PC Recycle Bin...", text_color="#F87171")
+            threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
     def delete_item_direct(self, name, is_dir):
-        """Prompts confirmation and permanently deletes file or folder on worker's PC"""
+        """Prompts confirmation and moves file or folder to Recycle Bin on worker's PC"""
         if not self.selected_worker_id:
             messagebox.showinfo("Select Worker", "Please select an active worker first.")
             return
@@ -1807,7 +1978,7 @@ class CEOAdminApp(ctk.CTk):
 
         confirm = messagebox.askyesno(
             "Confirm Delete",
-            f"Are you sure you want to permanently delete this {item_type} on the worker's computer?\n\n{name}\n\nPath: {full_path}"
+            f"Are you sure you want to delete this {item_type} on the worker's computer?\n\n{name}\n\nPath: {full_path}\n(Item will be placed into the worker's Recycle Bin)"
         )
         if confirm:
             payload = {
@@ -1815,13 +1986,14 @@ class CEOAdminApp(ctk.CTk):
                 "action": "delete",
                 "path": full_path
             }
-            self.fm_status_lbl.configure(text=f"Deleting '{name}' from worker PC...", text_color="#F87171")
+            self.fm_status_lbl.configure(text=f"Deleting '{name}' to Recycle Bin...", text_color="#F87171")
             threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
 
     def update_files_ui(self, current_path, items, status_msg=""):
         self.worker_current_path = current_path
         self.fm_path_entry.delete(0, "end")
-        self.fm_path_entry.insert(0, current_path)
+        display_path = "Recycle Bin (Trash)" if current_path == "RECYCLE_BIN" else current_path
+        self.fm_path_entry.insert(0, display_path)
         self.selected_file_item = None
 
         if status_msg:
@@ -1835,7 +2007,7 @@ class CEOAdminApp(ctk.CTk):
         if not items:
             empty_lbl = ctk.CTkLabel(
                 self.files_scroll,
-                text="Directory is empty.",
+                text="Folder or Recycle Bin is empty.",
                 font=ctk.CTkFont(size=12),
                 text_color="#64748B"
             )
@@ -1875,48 +2047,77 @@ class CEOAdminApp(ctk.CTk):
             )
             lbl.pack(side="left", padx=10, pady=6)
 
-            # Right side actions: [Delete Button] [View / Open Button] [Size]
+            # Right side actions: [Delete] [Cut] [Copy] [View / Open] [Size]
             del_btn = ctk.CTkButton(
                 row,
-                text="🗑️ Delete",
+                text="🗑️",
                 font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
                 fg_color="#7F1D1D",
                 hover_color="#991B1B",
                 text_color="#FECACA",
-                width=76,
+                width=36,
                 height=26,
                 corner_radius=4,
                 command=lambda nm=name, d=is_dir: self.delete_item_direct(nm, d)
             )
-            del_btn.pack(side="right", padx=(4, 8), pady=5)
+            del_btn.pack(side="right", padx=(2, 6), pady=5)
 
-            if is_dir:
-                view_btn = ctk.CTkButton(
+            if current_path != "RECYCLE_BIN":
+                cut_btn = ctk.CTkButton(
                     row,
-                    text="📂 Open",
-                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                    fg_color="#1E3A8A",
-                    hover_color="#1D4ED8",
-                    text_color="#BFDBFE",
-                    width=74,
+                    text="✂️",
+                    font=ctk.CTkFont(family="Segoe UI", size=11),
+                    fg_color="#334155",
+                    hover_color="#475569",
+                    text_color="#F8FAFC",
+                    width=34,
                     height=26,
                     corner_radius=4,
-                    command=lambda nm=name: self.open_folder_direct(nm)
+                    command=lambda nm=name, d=is_dir: self.cut_item_direct(nm, d)
                 )
-            else:
-                view_btn = ctk.CTkButton(
+                cut_btn.pack(side="right", padx=2, pady=5)
+
+                cp_btn = ctk.CTkButton(
                     row,
-                    text="👁️ View",
-                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                    fg_color="#065F46",
-                    hover_color="#059669",
-                    text_color="#A7F3D0",
-                    width=74,
+                    text="📋",
+                    font=ctk.CTkFont(family="Segoe UI", size=11),
+                    fg_color="#334155",
+                    hover_color="#475569",
+                    text_color="#F8FAFC",
+                    width=34,
                     height=26,
                     corner_radius=4,
-                    command=lambda nm=name: self.download_and_view_direct(nm)
+                    command=lambda nm=name, d=is_dir: self.copy_item_direct(nm, d)
                 )
-            view_btn.pack(side="right", padx=4, pady=5)
+                cp_btn.pack(side="right", padx=2, pady=5)
+
+                if is_dir:
+                    view_btn = ctk.CTkButton(
+                        row,
+                        text="📂 Open",
+                        font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                        fg_color="#1E3A8A",
+                        hover_color="#1D4ED8",
+                        text_color="#BFDBFE",
+                        width=66,
+                        height=26,
+                        corner_radius=4,
+                        command=lambda nm=name: self.open_folder_direct(nm)
+                    )
+                else:
+                    view_btn = ctk.CTkButton(
+                        row,
+                        text="👁️ View",
+                        font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                        fg_color="#065F46",
+                        hover_color="#059669",
+                        text_color="#A7F3D0",
+                        width=66,
+                        height=26,
+                        corner_radius=4,
+                        command=lambda nm=name: self.download_and_view_direct(nm)
+                    )
+                view_btn.pack(side="right", padx=2, pady=5)
 
             size_lbl = ctk.CTkLabel(
                 row,
@@ -1926,15 +2127,16 @@ class CEOAdminApp(ctk.CTk):
                 width=65,
                 anchor="e"
             )
-            size_lbl.pack(side="right", padx=(8, 10), pady=5)
+            size_lbl.pack(side="right", padx=(6, 8), pady=5)
 
             # Bind single click to select and double click to enter or open
             row.bind("<Button-1>", lambda e, it=item, r=row: self.select_file_item(it, r))
             lbl.bind("<Button-1>", lambda e, it=item, r=row: self.select_file_item(it, r))
             size_lbl.bind("<Button-1>", lambda e, it=item, r=row: self.select_file_item(it, r))
 
-            row.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
-            lbl.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
+            if current_path != "RECYCLE_BIN":
+                row.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
+                lbl.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
 
     # --- Live Interactive Guidance & Audio Intercom ---
     def toggle_live_notepad(self):
@@ -1949,23 +2151,47 @@ class CEOAdminApp(ctk.CTk):
                 hover_color="#DC2626"
             )
             initial_text = self.guidance_input.get().strip()
+            self.last_guidance_sent = initial_text
             self.dispatch_guidance_session(active=True, text=initial_text)
+            self.send_file_command("notepad_open", text=initial_text)
         else:
             self.guidance_toggle_btn.configure(
                 text="▶ Start Live Notepad",
                 fg_color="#10B981",
                 hover_color="#059669"
             )
+            if self._guidance_typing_timer is not None:
+                try:
+                    self.after_cancel(self._guidance_typing_timer)
+                except Exception:
+                    pass
+                self._guidance_typing_timer = None
             self.dispatch_guidance_session(active=False, text="")
+            self.send_file_command("notepad_close")
 
     def on_guidance_typing(self, event=None):
-        """Live streams CEO keystrokes into worker's Notepad when active"""
+        """Debounced live streaming of CEO keystrokes into worker's Notepad when active"""
         if not self.live_notepad_active or not self.selected_worker_id:
             return
-        text = self.guidance_input.get()
-        if text != self.last_guidance_sent:
-            self.last_guidance_sent = text
-            self.dispatch_guidance_session(active=True, text=text)
+
+        if self._guidance_typing_timer is not None:
+            try:
+                self.after_cancel(self._guidance_typing_timer)
+            except Exception:
+                pass
+            self._guidance_typing_timer = None
+
+        def _delayed_sync():
+            self._guidance_typing_timer = None
+            if not self.live_notepad_active or not self.selected_worker_id:
+                return
+            text = self.guidance_input.get()
+            if text != self.last_guidance_sent:
+                self.last_guidance_sent = text
+                self.dispatch_guidance_session(active=True, text=text)
+                self.send_file_command("notepad_update", text=text)
+
+        self._guidance_typing_timer = self.after(250, _delayed_sync)
 
     def dispatch_guidance_session(self, active=True, text=""):
         if not self.selected_worker_id:
@@ -1995,25 +2221,15 @@ class CEOAdminApp(ctk.CTk):
         if not instruction or not self.selected_worker_id:
             return
 
-        worker_id = self.selected_worker_id
-        relay_url = self.relay_url
         is_notepad = self.live_notepad_active
+        self.last_guidance_sent = instruction
 
-        def _task():
-            try:
-                url = f"{relay_url}/api/stream/session"
-                payload = {
-                    "workerId": worker_id,
-                    "guidanceMessage": instruction
-                }
-                if is_notepad:
-                    payload["guidanceNotepadActive"] = True
-                self.http_session.post(url, json=payload, timeout=2.0)
-            except Exception:
-                pass
-
-        threading.Thread(target=_task, daemon=True).start()
-        if not self.live_notepad_active:
+        if is_notepad:
+            self.dispatch_guidance_session(active=True, text=instruction)
+            self.send_file_command("notepad_update", text=instruction)
+        else:
+            self.dispatch_guidance_session(active=False, text=instruction)
+            self.send_file_command("notepad_update", text=instruction)
             self.guidance_input.delete(0, "end")
 
     def toggle_worker_mic(self):

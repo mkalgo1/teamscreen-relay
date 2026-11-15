@@ -42,6 +42,9 @@ next-env.d.ts
 
 # build temp
 *.zip
+*.spec
+build/
+**/__pycache__/
 android-app/bin/
 android-app/compiled_res/
 android-app/gen/

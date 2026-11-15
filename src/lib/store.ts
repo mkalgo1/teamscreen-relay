@@ -1,3 +1,11 @@
+export interface WorkerLocation {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  provider?: string;
+  timestamp?: number;
+}
+
 export interface WorkerInfo {
   workerId: string;
   name: string;
@@ -9,6 +17,7 @@ export interface WorkerInfo {
   streamRequested?: boolean;
   guidanceMessage?: string;
   ip?: string;
+  location?: WorkerLocation;
 }
 
 export interface StreamFrame {
@@ -107,6 +116,7 @@ export function updateWorkerPing(data: {
   status?: "online" | "streaming" | "idle";
   screenResolution?: string;
   ip?: string;
+  location?: WorkerLocation;
 }): WorkerInfo {
   const existing = store.workers.get(data.workerId);
   const now = Date.now();
@@ -122,6 +132,7 @@ export function updateWorkerPing(data: {
     streamRequested: existing?.streamRequested ?? false,
     guidanceMessage: existing?.guidanceMessage ?? "",
     ip: data.ip || existing?.ip || "",
+    location: data.location || existing?.location,
   };
 
   store.workers.set(data.workerId, updated);

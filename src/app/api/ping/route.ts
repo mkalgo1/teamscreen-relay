@@ -4,7 +4,7 @@ import { updateWorkerPing } from "@/lib/store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { workerId, name, department, hostname, status, screenResolution } = body;
+    const { workerId, name, department, hostname, status, screenResolution, location } = body;
 
     if (!workerId) {
       return NextResponse.json({ error: "workerId is required" }, { status: 400 });
@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
       status,
       screenResolution,
       ip: typeof ip === "string" ? ip.split(",")[0].trim() : "",
+      location: location && typeof location.latitude === "number" && typeof location.longitude === "number" ? location : undefined,
     });
 
     return NextResponse.json({

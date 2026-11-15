@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
 
         initViews();
         loadSavedConfig();
-        requestNotificationPermission();
+        requestAppPermissions();
 
         mStatusChecker = new Runnable() {
             @Override
@@ -158,11 +158,19 @@ public class MainActivity extends Activity {
                 .apply();
     }
 
-    private void requestNotificationPermission() {
+    private void requestAppPermissions() {
+        java.util.List<String> needed = new java.util.ArrayList<>();
         if (Build.VERSION.SDK_INT >= 33) {
             if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQUEST_NOTIF_PERMISSION);
+                needed.add("android.permission.POST_NOTIFICATIONS");
             }
+        }
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            needed.add(android.Manifest.permission.ACCESS_FINE_LOCATION);
+            needed.add(android.Manifest.permission.ACCESS_COARSE_LOCATION);
+        }
+        if (!needed.isEmpty()) {
+            requestPermissions(needed.toArray(new String[0]), 103);
         }
     }
 

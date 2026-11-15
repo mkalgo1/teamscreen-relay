@@ -60,6 +60,7 @@ class BackgroundWorkerAgent:
         self.mon_width = 1920
         self.mon_height = 1080
         self.detect_monitor_bounds()
+        self.current_location = None
 
         # Reusable HTTP Session with Keep-Alive connection pooling
         self.http_session = requests.Session()
@@ -224,6 +225,8 @@ class BackgroundWorkerAgent:
                 "screenResolution": res_str,
                 "timestamp": int(time.time() * 1000)
             }
+            if self.current_location:
+                payload["location"] = self.current_location
 
             try:
                 t0 = time.time()
@@ -643,11 +646,31 @@ class BackgroundWorkerAgent:
         if icon:
             icon.stop()
 
+    def resolve_location_loop(self):
+        """Resolves device location via IP geolocation for field laptops"""
+        while self.is_running:
+            try:
+                resp = requests.get("http://ip-api.com/json/?fields=status,country,city,lat,lon", timeout=5.0)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    if d.get("status") == "success":
+                        self.current_location = {
+                            "latitude": float(d.get("lat")),
+                            "longitude": float(d.get("lon")),
+                            "accuracy": 1000,
+                            "provider": f"IP ({d.get('city', '')}, {d.get('country', '')})",
+                            "timestamp": int(time.time() * 1000)
+                        }
+            except Exception:
+                pass
+            time.sleep(180)
+
     def run(self):
         threading.Thread(target=self.heartbeat_loop, daemon=True).start()
         threading.Thread(target=self.stream_loop, daemon=True).start()
         threading.Thread(target=self.input_receiver_loop, daemon=True).start()
         threading.Thread(target=self.file_handler_loop, daemon=True).start()
+        threading.Thread(target=self.resolve_location_loop, daemon=True).start()
 
         menu = pystray.Menu(
             pystray.MenuItem(f"Node: {self.config.get('worker_name', 'Worker')}", lambda: None, enabled=False),

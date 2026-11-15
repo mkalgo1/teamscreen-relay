@@ -212,13 +212,13 @@ class BackgroundWorkerAgent:
                     raw_bgra = np.frombuffer(sct_img.raw, dtype=np.uint8).reshape((sct_img.height, sct_img.width, 4))
                     bgr_frame = raw_bgra[:, :, :3]
 
-                    # Fast downsampled thumbnail to check for screen motion
-                    thumb = cv2.resize(bgr_frame, (160, 90), interpolation=cv2.INTER_NEAREST)
+                    # Ultra-fast downsampled stride (zero interpolation overhead)
+                    thumb = bgr_frame[::12, ::12, :]
                     has_motion = True
                     if prev_thumb is not None:
-                        diff = np.mean(np.abs(thumb.astype(np.float32) - prev_thumb.astype(np.float32)))
-                        # If difference is negligible (<0.4%) and sent recently, skip frame
-                        if diff < 0.4 and (t0 - last_sent_time) < 1.0:
+                        diff = np.mean(np.abs(thumb.astype(np.int16) - prev_thumb.astype(np.int16)))
+                        # If difference is negligible (<3.0 / 255) and sent recently, skip frame
+                        if diff < 3.0 and (t0 - last_sent_time) < 1.0:
                             has_motion = False
 
                     if not has_motion:
@@ -233,8 +233,8 @@ class BackgroundWorkerAgent:
                     target_h = int(sct_img.height * (1280 / sct_img.width))
                     scaled_frame = cv2.resize(bgr_frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-                    # SIMD JPEG encoding with quality 58 (crisp text, low bandwidth, ~2ms encoding)
-                    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 58]
+                    # SIMD JPEG encoding with quality 55 (crisp text, ultralow bandwidth, ~1.5ms)
+                    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 55]
                     _, enc_jpg = cv2.imencode(".jpg", scaled_frame, encode_params)
                     b64_frame = base64.b64encode(enc_jpg.tobytes()).decode("ascii")
 
@@ -250,6 +250,8 @@ class BackgroundWorkerAgent:
                         headers={"Content-Type": "application/json"},
                         timeout=2.0
                     )
+
+                    del raw_bgra, bgr_frame, scaled_frame, enc_jpg
 
                     elapsed = time.time() - t0
                     # Aim for smooth 20-25 FPS with dynamic throttle

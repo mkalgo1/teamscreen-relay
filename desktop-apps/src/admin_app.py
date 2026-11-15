@@ -51,6 +51,8 @@ class CEOAdminApp(ctk.CTk):
         self.last_fps_time = time.time()
         self.current_fps = 0
         self.last_frame_timestamp = 0
+        self.pending_render_data = None
+        self.is_render_scheduled = False
 
         # Video Recording State
         self.is_recording = False
@@ -1195,8 +1197,11 @@ class CEOAdminApp(ctk.CTk):
                                 pil_img = Image.fromarray(rgb_frame)
                                 photo = ImageTk.PhotoImage(pil_img)
 
-                                # Push ready photo to UI thread (main thread does ZERO math or resizing!)
-                                self.after(0, self.render_frame_on_canvas, photo, ox, oy, nw, nh)
+                                # Zero-latency latest-frame scheduling (drops stale backlog immediately)
+                                self.pending_render_data = (photo, ox, oy, nw, nh)
+                                if not self.is_render_scheduled:
+                                    self.is_render_scheduled = True
+                                    self.after(0, self._render_latest_frame)
 
                                 self.fps_count += 1
                                 now = time.time()
@@ -1210,6 +1215,13 @@ class CEOAdminApp(ctk.CTk):
                 time.sleep(0.035)
             except Exception:
                 time.sleep(0.2)
+
+    def _render_latest_frame(self):
+        self.is_render_scheduled = False
+        if self.pending_render_data:
+            photo, ox, oy, nw, nh = self.pending_render_data
+            self.pending_render_data = None
+            self.render_frame_on_canvas(photo, ox, oy, nw, nh)
 
     def render_frame_on_canvas(self, photo, ox, oy, nw, nh):
         """Runs on main thread: instant 0-cost image update via persistent canvas handle"""

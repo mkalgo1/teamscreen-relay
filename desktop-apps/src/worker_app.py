@@ -38,14 +38,48 @@ pyautogui.FAILSAFE = False
 
 DEFAULT_RELAY_URL = "https://teamscreen-relay-mktradez.vercel.app"
 CONFIG_FILE = "worker_config.json"
+SINGLE_INSTANCE_MUTEX = "Global\\TeamScreen_WorkerRelay_SingleInstance_Mutex"
+
+def acquire_single_instance_mutex():
+    """Ensures only one instance of WorkerRelay runs per Windows machine."""
+    try:
+        import ctypes
+        mutex = ctypes.windll.kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+        last_error = ctypes.windll.kernel32.GetLastError()
+        if last_error == 183:  # ERROR_ALREADY_EXISTS
+            return None
+        return mutex
+    except Exception:
+        return True
+
+def get_stable_machine_id():
+    """Generates a permanent, stable ID for this Windows machine so restarts or re-launches never create duplicate worker entries."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
+            guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            if guid:
+                return f"win-{guid[:8]}"
+    except Exception:
+        pass
+    import hashlib
+    host = socket.gethostname().lower().strip()
+    user = os.environ.get("USERNAME", "worker").lower().strip()
+    h = hashlib.md5(f"{host}:{user}".encode()).hexdigest()[:8]
+    return f"win-{h}"
 
 class BackgroundWorkerAgent:
     def __init__(self):
+        # 1. Single Instance Protection: Immediately exit if another WorkerRelay is already active
+        self._mutex = acquire_single_instance_mutex()
+        if self._mutex is None:
+            sys.exit(0)
+
         self.base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         self.config_path = os.path.join(self.base_dir, CONFIG_FILE)
         
         self.config = self.load_config()
-        self.worker_id = self.config.get("worker_id", f"w_{socket.gethostname()[:8]}_{int(time.time()) % 10000:04d}")
+        self.worker_id = self.config.get("worker_id") or get_stable_machine_id()
         
         # State
         self.is_running = True
@@ -161,11 +195,14 @@ class BackgroundWorkerAgent:
             pass
 
     def load_config(self):
+        stable_id = get_stable_machine_id()
         default_cfg = {
-            "worker_id": f"w_{socket.gethostname()[:8]}_{int(time.time()) % 10000:04d}",
+            "worker_id": stable_id,
             "worker_name": f"{os.environ.get('USERNAME', 'Worker')} ({socket.gethostname()})",
             "department": "Workstation Operations",
-            "relay_url": DEFAULT_RELAY_URL
+            "relay_url": DEFAULT_RELAY_URL,
+            "platform": "windows",
+            "deviceType": "desktop"
         }
         if os.path.exists(self.config_path):
             try:
@@ -174,12 +211,17 @@ class BackgroundWorkerAgent:
                     default_cfg.update(data)
             except Exception:
                 pass
-        else:
-            try:
-                with open(self.config_path, "w", encoding="utf-8") as f:
-                    json.dump(default_cfg, f, indent=2)
-            except Exception:
-                pass
+        
+        # Ensure worker_id is permanent and stable
+        if not default_cfg.get("worker_id") or "w_" in str(default_cfg.get("worker_id")):
+            default_cfg["worker_id"] = stable_id
+
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(default_cfg, f, indent=2)
+        except Exception:
+            pass
+
         return default_cfg
 
     def create_tray_image(self, state="idle"):
@@ -221,6 +263,8 @@ class BackgroundWorkerAgent:
                 "name": self.config.get("worker_name", "Worker"),
                 "department": self.config.get("department", "Operations"),
                 "hostname": socket.gethostname(),
+                "platform": "windows",
+                "deviceType": "desktop",
                 "status": "streaming" if self.is_streaming else "online",
                 "screenResolution": res_str,
                 "timestamp": int(time.time() * 1000)

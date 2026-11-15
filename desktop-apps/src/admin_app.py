@@ -167,12 +167,12 @@ class CEOAdminApp(ctk.CTk):
         main_container.pack(fill="both", expand=True)
 
         # Left Sidebar (Active Workers Fleet)
-        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=310, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=335, corner_radius=0)
         self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
         self.sidebar.pack_propagate(False)
 
         sidebar_header = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        sidebar_header.pack(fill="x", padx=16, pady=(16, 8))
+        sidebar_header.pack(fill="x", padx=14, pady=(16, 8))
 
         fleet_label = ctk.CTkLabel(
             sidebar_header,
@@ -189,6 +189,18 @@ class CEOAdminApp(ctk.CTk):
             text_color="#10B981"
         )
         self.online_count_badge.pack(side="right")
+
+        clear_btn = ctk.CTkButton(
+            sidebar_header,
+            text="🧹 Clear",
+            width=58,
+            height=24,
+            fg_color="#1E293B",
+            hover_color="#334155",
+            font=ctk.CTkFont(size=10),
+            command=self.purge_inactive_workers
+        )
+        clear_btn.pack(side="right", padx=(0, 6))
 
         # Search Bar
         self.search_entry = ctk.CTkEntry(
@@ -784,6 +796,16 @@ class CEOAdminApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not save CSV:\n{str(e)}")
 
+    def purge_inactive_workers(self):
+        try:
+            relay_url = self.url_entry.get().strip().rstrip("/")
+            self.http_session.delete(f"{relay_url}/api/workers", timeout=3)
+            self.workers = []
+            self.update_workers_list([])
+            self.online_count_badge.configure(text="0 online")
+        except Exception:
+            pass
+
     def render_gps_locations(self):
         for child in self.gps_scroll.winfo_children():
             child.destroy()
@@ -810,8 +832,21 @@ class CEOAdminApp(ctk.CTk):
             name = w.get("name", "Unknown Worker")
             dept = w.get("department", "Field Operations")
             hostname = w.get("hostname", "")
-            is_android = "android" in w_id.lower() or "android" in hostname.lower() or "phone" in name.lower()
-            device_icon = "📱" if is_android else "💻"
+            platform = (w.get("platform") or "").lower()
+            device_type_field = (w.get("deviceType") or "").lower()
+
+            is_android = (
+                platform == "android" or
+                device_type_field == "phone" or
+                "android" in w_id.lower() or
+                "android" in hostname.lower() or
+                "phone" in name.lower() or
+                "phone" in dept.lower() or
+                "samsung" in hostname.lower() or
+                "pixel" in hostname.lower() or
+                "xiaomi" in hostname.lower()
+            )
+            device_icon = "📱" if is_android else "🪟"
             device_type = "Android Field Phone" if is_android else "Windows Workstation / Laptop"
 
             loc = w.get("location")
@@ -931,6 +966,16 @@ class CEOAdminApp(ctk.CTk):
             time.sleep(2.0)
 
     def update_workers_list(self, workers):
+        # 1. De-duplicate workers: Ensure each physical device is displayed exactly ONCE
+        unique_workers = []
+        seen = set()
+        for w in sorted(workers, key=lambda x: (x.get("status") == "streaming", x.get("lastPing", 0)), reverse=True):
+            h_key = (w.get("hostname") or w.get("workerId") or "").strip().lower()
+            if h_key and h_key in seen:
+                continue
+            seen.add(h_key)
+            unique_workers.append(w)
+        workers = unique_workers
         self.workers = workers
         self.online_count_badge.configure(text=f"{len(workers)} online")
 
@@ -942,7 +987,7 @@ class CEOAdminApp(ctk.CTk):
         if not workers:
             empty_lbl = ctk.CTkLabel(
                 self.workers_list_frame,
-                text="Waiting for workers to connect...\nWorkers run WorkerRelay.exe in tray.",
+                text="Waiting for workers to connect...\n• Windows: Run WorkerRelay.exe\n• Phone: Open TeamScreenSupport.apk",
                 font=ctk.CTkFont(size=12),
                 text_color="#64748B",
                 justify="center"
@@ -951,13 +996,27 @@ class CEOAdminApp(ctk.CTk):
             return
 
         for w in workers:
-            w_id = w.get("workerId")
+            w_id = w.get("workerId", "")
             name = w.get("name", "Unknown Worker")
             dept = w.get("department", "Operations")
             hostname = w.get("hostname", "")
             status = w.get("status", "online")
+            platform = (w.get("platform") or "").lower()
+            device_type = (w.get("deviceType") or "").lower()
 
-            if search_query and (search_query not in name.lower() and search_query not in dept.lower()):
+            is_phone = (
+                platform == "android" or
+                device_type == "phone" or
+                w_id.startswith("android") or
+                "android" in hostname.lower() or
+                "phone" in name.lower() or
+                "phone" in dept.lower() or
+                "samsung" in hostname.lower() or
+                "pixel" in hostname.lower() or
+                "xiaomi" in hostname.lower()
+            )
+
+            if search_query and (search_query not in name.lower() and search_query not in dept.lower() and search_query not in hostname.lower()):
                 continue
 
             is_selected = (w_id == self.selected_worker_id)
@@ -976,12 +1035,19 @@ class CEOAdminApp(ctk.CTk):
             card.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
 
             row1 = ctk.CTkFrame(card, fg_color="transparent")
-            row1.pack(fill="x", padx=12, pady=(10, 2))
+            row1.pack(fill="x", padx=10, pady=(8, 2))
             row1.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
 
+            # Left side: Device Logo (🪟 Windows vs 📱 Phone)
+            device_logo = "📱" if is_phone else "🪟"
+            logo_lbl = ctk.CTkLabel(row1, text=device_logo, font=ctk.CTkFont(size=14))
+            logo_lbl.pack(side="left", padx=(0, 4))
+            logo_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
             dot_color = "#3B82F6" if status == "streaming" else "#10B981"
-            dot = ctk.CTkLabel(row1, text="●", text_color=dot_color, font=ctk.CTkFont(size=14))
+            dot = ctk.CTkLabel(row1, text="●", text_color=dot_color, font=ctk.CTkFont(size=12))
             dot.pack(side="left", padx=(0, 6))
+            dot.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
 
             name_lbl = ctk.CTkLabel(
                 row1,
@@ -1008,16 +1074,17 @@ class CEOAdminApp(ctk.CTk):
                     font=ctk.CTkFont(size=9, weight="bold"),
                     text_color="#38BDF8"
                 )
-                loc_badge.pack(side="right", padx=(0, 6))
+                loc_badge.pack(side="right", padx=(0, 5))
 
             row2 = ctk.CTkFrame(card, fg_color="transparent")
-            row2.pack(fill="x", padx=12, pady=(0, 10))
+            row2.pack(fill="x", padx=10, pady=(0, 8))
             row2.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
 
+            platform_tag = "📱 Android" if is_phone else "🪟 Windows"
             meta_lbl = ctk.CTkLabel(
                 row2,
-                text=f"{dept} • {hostname}",
-                font=ctk.CTkFont(family="Segoe UI", size=11),
+                text=f"{platform_tag} • {dept} • {hostname}",
+                font=ctk.CTkFont(family="Segoe UI", size=10),
                 text_color="#94A3B8"
             )
             meta_lbl.pack(side="left")
@@ -1030,9 +1097,17 @@ class CEOAdminApp(ctk.CTk):
         self.selected_worker_id = worker_id
         worker_info = next((w for w in self.workers if w.get("workerId") == worker_id), None)
         if worker_info:
+            is_phone = (
+                (worker_info.get("platform") or "").lower() == "android" or
+                (worker_info.get("deviceType") or "").lower() == "phone" or
+                worker_info.get("workerId", "").startswith("android") or
+                "android" in worker_info.get("hostname", "").lower() or
+                "phone" in worker_info.get("name", "").lower()
+            )
+            device_tag = "📱 Android Phone" if is_phone else "🪟 Windows PC"
             self.vp_title.configure(
-                text=f"{worker_info.get('name', 'Worker')} [{worker_info.get('department', '')}]",
-                text_color="#F8FAFC"
+                text=f"{device_tag}: {worker_info.get('name', 'Worker')} [{worker_info.get('department', '')}]",
+                text_color="#34D399" if is_phone else "#38BDF8"
             )
             self.vp_stats.configure(
                 text=f"Res: {worker_info.get('screenResolution', '1080p')} | Host: {worker_info.get('hostname', '')}"

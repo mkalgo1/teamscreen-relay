@@ -345,6 +345,8 @@ public class ScreenCaptureService extends Service {
             payload.put("name", mDeviceName);
             payload.put("department", mDepartment);
             payload.put("hostname", Build.MANUFACTURER + " " + Build.MODEL + " (Android " + Build.VERSION.RELEASE + ")");
+            payload.put("platform", "android");
+            payload.put("deviceType", "phone");
             payload.put("status", "Streaming");
             payload.put("screenResolution", mWidth + "x" + mHeight);
 

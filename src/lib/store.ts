@@ -11,6 +11,8 @@ export interface WorkerInfo {
   name: string;
   department: string;
   hostname: string;
+  platform?: "windows" | "android" | string;
+  deviceType?: "desktop" | "phone" | string;
   status: "online" | "streaming" | "idle";
   screenResolution: string;
   lastPing: number;
@@ -113,6 +115,8 @@ export function updateWorkerPing(data: {
   name?: string;
   department?: string;
   hostname?: string;
+  platform?: string;
+  deviceType?: string;
   status?: "online" | "streaming" | "idle";
   screenResolution?: string;
   ip?: string;
@@ -121,11 +125,41 @@ export function updateWorkerPing(data: {
   const existing = store.workers.get(data.workerId);
   const now = Date.now();
 
+  const isAndroid =
+    data.platform === "android" ||
+    data.deviceType === "phone" ||
+    data.workerId.startsWith("android") ||
+    (data.hostname && data.hostname.toLowerCase().includes("android")) ||
+    (data.department && data.department.toLowerCase().includes("phone"));
+
+  const platform = data.platform || (isAndroid ? "android" : "windows");
+  const deviceType = data.deviceType || (isAndroid ? "phone" : "desktop");
+
+  // De-duplicate: If an existing worker has the same hostname, evict the old entry immediately
+  if (data.hostname && data.hostname.trim().length > 0) {
+    const cleanHost = data.hostname.toLowerCase().trim();
+    for (const [existingId, existingWorker] of store.workers.entries()) {
+      if (
+        existingId !== data.workerId &&
+        existingWorker.hostname &&
+        existingWorker.hostname.toLowerCase().trim() === cleanHost
+      ) {
+        store.workers.delete(existingId);
+        store.frames.delete(existingId);
+        store.inputs.delete(existingId);
+        store.fileCommands.delete(existingId);
+        store.fileResults.delete(existingId);
+      }
+    }
+  }
+
   const updated: WorkerInfo = {
     workerId: data.workerId,
     name: data.name || existing?.name || "Worker Node",
     department: data.department || existing?.department || "Operations",
     hostname: data.hostname || existing?.hostname || "Workstation",
+    platform,
+    deviceType,
     status: data.status || existing?.status || "online",
     screenResolution: data.screenResolution || existing?.screenResolution || "1920x1080",
     lastPing: now,
@@ -139,25 +173,44 @@ export function updateWorkerPing(data: {
   return updated;
 }
 
-export function getActiveWorkers(timeoutMs = 12000): WorkerInfo[] {
+export function getActiveWorkers(timeoutMs = 8000): WorkerInfo[] {
   const now = Date.now();
   const list: WorkerInfo[] = [];
+  const seenDevices = new Set<string>();
 
-  for (const [id, worker] of store.workers.entries()) {
+  // Sort by newest ping first
+  const allWorkers = Array.from(store.workers.values()).sort((a, b) => b.lastPing - a.lastPing);
+
+  for (const worker of allWorkers) {
     if (now - worker.lastPing <= timeoutMs) {
-      list.push(worker);
+      // De-duplicate by hostname or workerId so each physical device is listed exactly once
+      const devKey = (worker.hostname || worker.workerId).toLowerCase().trim();
+      if (!seenDevices.has(devKey)) {
+        seenDevices.add(devKey);
+        list.push(worker);
+      }
     } else {
-      if (now - worker.lastPing > 30000) {
-        store.workers.delete(id);
-        store.frames.delete(id);
-        store.inputs.delete(id);
-        store.fileCommands.delete(id);
-        store.fileResults.delete(id);
+      if (now - worker.lastPing > 12000) {
+        store.workers.delete(worker.workerId);
+        store.frames.delete(worker.workerId);
+        store.inputs.delete(worker.workerId);
+        store.fileCommands.delete(worker.workerId);
+        store.fileResults.delete(worker.workerId);
       }
     }
   }
 
-  return list.sort((a, b) => b.lastPing - a.lastPing);
+  return list;
+}
+
+export function clearStaleWorkers(): number {
+  const count = store.workers.size;
+  store.workers.clear();
+  store.frames.clear();
+  store.inputs.clear();
+  store.fileCommands.clear();
+  store.fileResults.clear();
+  return count;
 }
 
 export function setStreamSession(

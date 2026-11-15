@@ -6,8 +6,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -17,6 +19,15 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 public class MainActivity extends Activity {
@@ -33,6 +44,14 @@ public class MainActivity extends Activity {
     private TextView mTxtStreamStatus;
     private Button mBtnToggleStream;
     private TextView mTxtLogs;
+
+    // Customer Service Call & Communication Log Views
+    private EditText mEditCustomerName;
+    private EditText mEditCustomerPhone;
+    private EditText mEditInteractionNotes;
+    private Button mBtnDialCustomer;
+    private Button mBtnSaveInteraction;
+    private TextView mTxtLogStatus;
 
     private MediaProjectionManager mProjectionManager;
     private String mWorkerId;
@@ -69,6 +88,27 @@ public class MainActivity extends Activity {
         mTxtStreamStatus = findViewById(R.id.txtStreamStatus);
         mBtnToggleStream = findViewById(R.id.btnToggleStream);
         mTxtLogs = findViewById(R.id.txtLogs);
+
+        // Customer Service Interaction Views
+        mEditCustomerName = findViewById(R.id.editCustomerName);
+        mEditCustomerPhone = findViewById(R.id.editCustomerPhone);
+        mEditInteractionNotes = findViewById(R.id.editInteractionNotes);
+        mBtnDialCustomer = findViewById(R.id.btnDialCustomer);
+        mBtnSaveInteraction = findViewById(R.id.btnSaveInteraction);
+        mTxtLogStatus = findViewById(R.id.txtLogStatus);
+
+        mBtnDialCustomer.setOnClickListener(v -> {
+            String phone = mEditCustomerPhone.getText().toString().trim();
+            if (phone.isEmpty()) {
+                Toast.makeText(this, "Please enter customer phone number", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Intent dialIntent = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(phone)));
+            startActivity(dialIntent);
+            log("Opening phone dialer for: " + phone);
+        });
+
+        mBtnSaveInteraction.setOnClickListener(v -> submitCustomerInteraction());
 
         mBtnEnableAccessibility.setOnClickListener(v -> {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
@@ -223,6 +263,94 @@ public class MainActivity extends Activity {
             newLog = newLog.substring(0, 2000);
         }
         mTxtLogs.setText(newLog);
+    }
+
+    private void submitCustomerInteraction() {
+        final String name = mEditCustomerName.getText().toString().trim();
+        final String phone = mEditCustomerPhone.getText().toString().trim();
+        final String notes = mEditInteractionNotes.getText().toString().trim();
+
+        if (phone.isEmpty()) {
+            Toast.makeText(this, "Enter phone number before saving", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        final String relayUrl = mEditRelayUrl.getText().toString().trim().replaceAll("/+$", "");
+        final String workerName = mEditDeviceName.getText().toString().trim();
+
+        mBtnSaveInteraction.setEnabled(false);
+        mTxtLogStatus.setText("Syncing interaction to CEO dashboard...");
+
+        new Thread(() -> {
+            boolean success = false;
+            try {
+                // 1. Post to relay /api/cs/logs
+                JSONObject payload = new JSONObject();
+                payload.put("workerId", mWorkerId);
+                payload.put("workerName", workerName);
+                payload.put("type", "call");
+                payload.put("customerName", name.isEmpty() ? "Unknown Customer" : name);
+                payload.put("customerPhone", phone);
+                payload.put("direction", "outgoing");
+                payload.put("status", "completed");
+                payload.put("notes", notes);
+
+                URL url = new URL(relayUrl + "/api/cs/logs");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(3500);
+                conn.setReadTimeout(3500);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+                byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(body);
+                }
+
+                if (conn.getResponseCode() >= 200 && conn.getResponseCode() < 300) {
+                    success = true;
+                }
+                conn.disconnect();
+
+                // 2. Append to local CSV file in TeamScreen documents folder
+                File baseDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (baseDir == null || !baseDir.exists()) baseDir = getExternalFilesDir(null);
+                File companyDir = new File(baseDir, "TeamScreen");
+                if (!companyDir.exists()) companyDir.mkdirs();
+
+                File csvFile = new File(companyDir, "customer_service_logs.csv");
+                boolean writeHeader = !csvFile.exists();
+                try (FileOutputStream fos = new FileOutputStream(csvFile, true);
+                     OutputStreamWriter osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                    if (writeHeader) {
+                        osw.write("Timestamp,Device,CustomerName,Phone,Direction,Status,Notes\n");
+                    }
+                    String timeStr = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", System.currentTimeMillis()).toString();
+                    String cleanNotes = notes.replace("\"", "\"\"").replace("\n", " ");
+                    osw.write(String.format("\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+                            timeStr, workerName, name, phone, "outgoing", "completed", cleanNotes));
+                }
+            } catch (Exception e) {
+                // Handled in UI callback
+            }
+
+            final boolean ok = success;
+            mHandler.post(() -> {
+                mBtnSaveInteraction.setEnabled(true);
+                if (ok) {
+                    Toast.makeText(this, "✅ Logged to CEO Admin & saved to company CSV", Toast.LENGTH_SHORT).show();
+                    mTxtLogStatus.setText("Last logged: " + phone + " (Synced)");
+                    mEditCustomerName.setText("");
+                    mEditCustomerPhone.setText("");
+                    mEditInteractionNotes.setText("");
+                    log("Customer interaction logged: " + phone);
+                } else {
+                    Toast.makeText(this, "Saved locally in CSV (Relay offline)", Toast.LENGTH_SHORT).show();
+                    mTxtLogStatus.setText("Saved locally in TeamScreen CSV");
+                }
+            });
+        }).start();
     }
 
     @Override

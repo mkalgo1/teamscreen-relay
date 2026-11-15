@@ -179,6 +179,109 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
+        <!-- Customer Communication & Call Logging Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@color/card_bg"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Customer Interaction &amp; Call Hub"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Log customer calls &amp; chats to CEO dashboard"
+                android:textColor="@color/accent"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/editCustomerName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@color/border"
+                android:hint="Customer Name (e.g. John Doe)"
+                android:inputType="textPersonName"
+                android:padding="10dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/editCustomerPhone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@color/border"
+                android:hint="Phone / WhatsApp (+1...)"
+                android:inputType="phone"
+                android:padding="10dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/editInteractionNotes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@color/border"
+                android:hint="Notes / Order Details / Request summary..."
+                android:inputType="textMultiLine"
+                android:lines="2"
+                android:padding="10dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnDialCustomer"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:backgroundTint="@color/border"
+                    android:text="📞 Call"
+                    android:textColor="@color/text_primary" />
+
+                <Button
+                    android:id="@+id/btnSaveInteraction"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="@color/success"
+                    android:text="💾 Log to CEO"
+                    android:textColor="@color/primary_dark"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/txtLogStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Synced with company records"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <!-- Status Log Card -->
         <LinearLayout
             android:layout_width="match_parent"

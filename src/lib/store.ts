@@ -57,6 +57,20 @@ export interface FileResult {
   timestamp: number;
 }
 
+export interface CustomerLog {
+  id: string;
+  workerId: string;
+  workerName: string;
+  type: "call" | "message";
+  customerName: string;
+  customerPhone: string;
+  direction: "incoming" | "outgoing";
+  status: "completed" | "missed" | "followup";
+  duration?: string;
+  notes?: string;
+  timestamp: number;
+}
+
 // Global in-memory storage across API routes on warm serverless instances
 interface GlobalRelayStore {
   workers: Map<string, WorkerInfo>;
@@ -64,6 +78,7 @@ interface GlobalRelayStore {
   inputs: Map<string, InputEvent[]>;
   fileCommands: Map<string, FileCommand[]>;
   fileResults: Map<string, FileResult>;
+  customerLogs: CustomerLog[];
 }
 
 declare global {
@@ -78,6 +93,7 @@ if (!global.__relayStore) {
     inputs: new Map<string, InputEvent[]>(),
     fileCommands: new Map<string, FileCommand[]>(),
     fileResults: new Map<string, FileResult>(),
+    customerLogs: [],
   };
 }
 
@@ -222,4 +238,27 @@ export function setFileResult(result: FileResult): void {
 
 export function getFileResult(workerId: string): FileResult | null {
   return store.fileResults.get(workerId) || null;
+}
+
+export function addCustomerLog(log: Omit<CustomerLog, "id" | "timestamp">): CustomerLog {
+  const newLog: CustomerLog = {
+    ...log,
+    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: Date.now(),
+  };
+
+  store.customerLogs.unshift(newLog);
+  // Keep last 500 logs
+  if (store.customerLogs.length > 500) {
+    store.customerLogs.length = 500;
+  }
+
+  return newLog;
+}
+
+export function getCustomerLogs(workerId?: string): CustomerLog[] {
+  if (!workerId) {
+    return store.customerLogs;
+  }
+  return store.customerLogs.filter((l) => l.workerId === workerId);
 }

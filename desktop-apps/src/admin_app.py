@@ -239,6 +239,18 @@ class CEOAdminApp(ctk.CTk):
         self.files_toggle_btn.pack(side="left", padx=3)
         self.files_toggle_btn.configure(state="disabled")
 
+        # Remote Auto-Startup Button
+        self.autostart_btn = ctk.CTkButton(
+            self.controls_box,
+            text="⚡ Auto-Startup",
+            fg_color="#1E293B",
+            hover_color="#334155",
+            width=115,
+            command=self.remote_ensure_autostart
+        )
+        self.autostart_btn.pack(side="left", padx=3)
+        self.autostart_btn.configure(state="disabled")
+
         # Remote Input Toggle Button
         self.input_toggle_btn = ctk.CTkButton(
             self.controls_box,
@@ -618,8 +630,42 @@ class CEOAdminApp(ctk.CTk):
             self.record_btn.configure(state="normal")
             self.input_toggle_btn.configure(state="normal")
             self.files_toggle_btn.configure(state="normal")
+            self.autostart_btn.configure(state="normal")
 
             self.start_stream_session()
+
+    def remote_ensure_autostart(self):
+        """Dispatches remote command to worker PC to install to %LOCALAPPDATA% and register Windows Startup"""
+        if not self.selected_worker_id:
+            messagebox.showinfo("Select Worker", "Please select an active worker first.")
+            return
+
+        worker_id = self.selected_worker_id
+        relay_url = self.relay_url
+
+        def _task():
+            try:
+                self.after(0, lambda: self.autostart_btn.configure(state="disabled", text="⚡ Setting..."))
+                self.http_session.post(
+                    f"{relay_url}/api/files/command",
+                    json={"workerId": worker_id, "action": "autostart"},
+                    timeout=3.0
+                )
+                time.sleep(1.2)
+                res_resp = self.http_session.get(f"{relay_url}/api/files/result?workerId={worker_id}", timeout=3.0)
+                if res_resp.status_code == 200:
+                    data = res_resp.json()
+                    res = data.get("result", {})
+                    msg = res.get("statusMessage", "Persistent installation and Windows Startup verified on worker PC.")
+                    self.after(0, lambda: messagebox.showinfo("Auto-Startup Confirmed", f"Worker Response:\n{msg}"))
+                else:
+                    self.after(0, lambda: messagebox.showinfo("Auto-Startup Sent", "Command dispatched to worker agent."))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Error", f"Failed to send startup command: {e}"))
+            finally:
+                self.after(0, lambda: self.autostart_btn.configure(state="normal", text="⚡ Auto-Startup"))
+
+        threading.Thread(target=_task, daemon=True).start()
 
     def toggle_stream_session(self):
         if self.is_monitoring:

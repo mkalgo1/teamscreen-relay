@@ -38,7 +38,7 @@ export interface FileItem {
 export interface FileCommand {
   id: string;
   workerId: string;
-  action: "list" | "upload" | "download" | "launch" | "delete" | "mkdir";
+  action: "list" | "upload" | "download" | "launch" | "delete" | "mkdir" | "autostart";
   path?: string;
   fileName?: string;
   fileData?: string; // Base64

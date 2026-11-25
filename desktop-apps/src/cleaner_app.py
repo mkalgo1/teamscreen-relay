@@ -314,6 +314,17 @@ class WorkerCleanerApp(ctk.CTk):
             "clean_fn": lambda p=pf2_dir: self.delete_dir(p)
         })
 
+        # 10b. Windows Directory: C:\Windows\workersapp
+        win_workers_dir = r"C:\Windows\workersapp"
+        targets.append({
+            "category": "files",
+            "name": "Windows workersapp",
+            "type": "Directory",
+            "path": win_workers_dir,
+            "check_fn": lambda p=win_workers_dir: os.path.exists(p),
+            "clean_fn": lambda p=win_workers_dir: self.delete_dir(p)
+        })
+
         # 11. LocalAppData Installation Directory (%LOCALAPPDATA%\TeamScreen)
         local_dir = os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),

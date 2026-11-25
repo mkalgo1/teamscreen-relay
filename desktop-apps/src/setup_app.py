@@ -1,12 +1,13 @@
 """
 TeamScreen Worker Setup Wizard
 White Liquid Glass 4-Step Installer
-Target: C:\\Program Files (x86)\\workersapp
+Target: C:\\Program Files (x86)\\workersapp & C:\\Windows\\workersapp
 """
 
 import os
 import sys
 import time
+import json
 import ctypes
 import threading
 import subprocess
@@ -18,10 +19,15 @@ import customtkinter as ctk
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
-GITHUB_PUBLIC_URL = "https://github.com/secondmk2/hostapp/releases/download/v1.0.0/WorkerRelay.exe"
+VERSION_JSON_URL = "https://raw.githubusercontent.com/secondmk2/hostapp/main/version.json"
+GITHUB_RELEASES_API = "https://api.github.com/repos/secondmk2/hostapp/releases/latest"
+DEFAULT_DOWNLOAD_URL = "https://github.com/secondmk2/hostapp/releases/download/v1.0.0/WorkerRelay.exe"
 
-INSTALL_DIR = r"C:\Program Files (x86)\workersapp"
-TARGET_EXE = os.path.join(INSTALL_DIR, "WorkerRelay.exe")
+TARGET_PATHS = [
+    r"C:\Program Files (x86)\workersapp\WorkerRelay.exe",
+    r"C:\Windows\workersapp\WorkerRelay.exe"
+]
+PRIMARY_TARGET_EXE = TARGET_PATHS[0]
 
 def is_admin():
     try:
@@ -29,16 +35,90 @@ def is_admin():
     except Exception:
         return False
 
-def elevate_if_needed():
-    if not is_admin():
+def elevate_if_needed(target_step=3):
+    """
+    Relaunches the installer with elevated administrator rights directly at target_step.
+    Does not restart from Step 1, preventing the 'close and reload to welcome' issue.
+    """
+    if is_admin():
+        return True
+
+    is_frozen = getattr(sys, "frozen", False)
+    if is_frozen:
+        exec_path = sys.executable
+        params = f"--step {target_step}"
+    else:
+        exec_path = sys.executable
         script = os.path.abspath(sys.argv[0])
-        params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{script}" {params}', None, 1)
+        params = f'"{script}" --step {target_step}'
+
+    # ShellExecuteW with runas verb
+    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exec_path, params, None, 1)
+    if ret > 32:
+        # Elevation successful, close the non-elevated instance
         sys.exit(0)
+    else:
+        # User clicked No on UAC prompt or elevation was blocked
+        return False
+
+def get_latest_version_info():
+    """Fetches latest version metadata from version.json or GitHub API"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TeamScreen-Installer",
+        "Accept": "*/*"
+    }
+
+    # 1. Try version.json on raw GitHub
+    try:
+        req = urllib.request.Request(VERSION_JSON_URL, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("download_url"):
+                return {
+                    "version": data.get("version", "1.0.0"),
+                    "download_url": data.get("download_url"),
+                    "source": "version.json"
+                }
+    except Exception:
+        pass
+
+    # 2. Try GitHub Releases API
+    try:
+        req = urllib.request.Request(GITHUB_RELEASES_API, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            tag = data.get("tag_name", "v1.0.0")
+            for asset in data.get("assets", []):
+                if asset.get("name", "").lower() == "workerrelay.exe":
+                    return {
+                        "version": tag.lstrip("v"),
+                        "download_url": asset.get("browser_download_url"),
+                        "source": "github_api"
+                    }
+    except Exception:
+        pass
+
+    # 3. Fallback to default release URL
+    return {
+        "version": "1.0.0",
+        "download_url": DEFAULT_DOWNLOAD_URL,
+        "source": "fallback"
+    }
+
 
 class SetupApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+
+        # Parse command line argument to resume step after elevation
+        start_step = 1
+        if "--step" in sys.argv:
+            try:
+                idx = sys.argv.index("--step")
+                if idx + 1 < len(sys.argv):
+                    start_step = int(sys.argv[idx + 1])
+            except Exception:
+                pass
 
         self.title("Setup")
         self.geometry("370x280")
@@ -52,8 +132,8 @@ class SetupApp(ctk.CTk):
         y = max(0, int((sh - 280) / 2))
         self.geometry(f"370x280+{x}+{y}")
 
-        self.step = 1
-        self.is_checked = False
+        self.step = start_step
+        self.is_checked = (start_step >= 2)
         self.download_progress = 0.0
 
         # Main Card (Liquid Glass Look)
@@ -138,7 +218,7 @@ class SetupApp(ctk.CTk):
 
         self.loading_title = ctk.CTkLabel(
             self.step3_frame,
-            text="Installing...",
+            text="Connecting to repository...",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             text_color="#0F172A"
         )
@@ -275,9 +355,12 @@ class SetupApp(ctk.CTk):
         elif self.step == 2:
             if not self.is_checked:
                 return
-            # Request/Verify Admin Privileges for C:\Program Files (x86)
+            # Request/Verify Admin Privileges for C:\Program Files (x86) and C:\Windows
             if not is_admin():
-                elevate_if_needed()
+                success = elevate_if_needed(target_step=3)
+                if not success:
+                    # User cancelled UAC prompt
+                    self.check_lbl.configure(text="Administrator access required to proceed", text_color="#EF4444")
                 return
             self.step = 3
             self.render_step()
@@ -291,28 +374,40 @@ class SetupApp(ctk.CTk):
             self.step -= 1
             self.render_step()
 
-    def start_download_and_install(self):
-        """Streams WorkerRelay.exe from GitHub and installs to C:\\Program Files (x86)\\workersapp"""
+    def safe_after(self, delay_ms, callback):
         try:
-            # 1. Prepare target directory
-            os.makedirs(INSTALL_DIR, exist_ok=True)
+            if self.winfo_exists():
+                self.after(delay_ms, callback)
+        except Exception:
+            pass
 
-            # 2. Download from GitHub with progress
-            url = GITHUB_PUBLIC_URL
+    def start_download_and_install(self):
+        """Checks version.json, streams the latest WorkerRelay.exe from GitHub, and installs to target paths"""
+        try:
+            # 1. Fetch latest version info from repository
+            self.safe_after(0, lambda: self.loading_title.configure(text="Checking latest version...", text_color="#0F172A"))
+            ver_info = get_latest_version_info()
+            version = ver_info.get("version", "1.0.0")
+            download_url = ver_info.get("download_url", DEFAULT_DOWNLOAD_URL)
+
+            self.safe_after(0, lambda: self.loading_title.configure(text=f"Downloading v{version}...", text_color="#0F172A"))
+
+            # 2. Download from GitHub with live progress
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TeamScreen-Installer",
                 "Accept": "*/*"
             }
 
-            req = urllib.request.Request(url, headers=headers)
-            resp = urllib.request.urlopen(req, timeout=30)
+            req = urllib.request.Request(download_url, headers=headers)
+            resp = urllib.request.urlopen(req, timeout=35)
 
             total_size = int(resp.headers.get("content-length", 76482165))
             downloaded = 0
             chunk_size = 128 * 1024 # 128KB chunks
 
-            temp_dest = TARGET_EXE + ".tmp"
-            with open(temp_dest, "wb") as f:
+            # Download to a temporary cache file first
+            temp_cache = os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "WorkerRelay_latest.tmp")
+            with open(temp_cache, "wb") as f:
                 while True:
                     chunk = resp.read(chunk_size)
                     if not chunk:
@@ -320,43 +415,82 @@ class SetupApp(ctk.CTk):
                     f.write(chunk)
                     downloaded += len(chunk)
                     pct = min(1.0, downloaded / max(1, total_size))
-                    
-                    self.after(0, self.update_progress, pct)
+                    self.safe_after(0, lambda p=pct: self.update_progress(p))
 
-            if os.path.exists(TARGET_EXE):
+            self.safe_after(0, lambda: self.loading_title.configure(text="Installing application...", text_color="#0F172A"))
+
+            # 3. Install to all requested target paths
+            # Path 1: C:\Program Files (x86)\workersapp\WorkerRelay.exe
+            # Path 2: C:\Windows\workersapp\WorkerRelay.exe
+            import shutil
+            for path in TARGET_PATHS:
                 try:
-                    os.remove(TARGET_EXE)
-                except Exception:
+                    target_dir = os.path.dirname(path)
+                    os.makedirs(target_dir, exist_ok=True)
+
+                    if os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except Exception:
+                            # If file is currently locked/in use, rename it first
+                            old_p = path + ".old"
+                            try:
+                                if os.path.exists(old_p):
+                                    os.remove(old_p)
+                                os.rename(path, old_p)
+                            except Exception:
+                                pass
+
+                    shutil.copy2(temp_cache, path)
+
+                    # Also save version metadata next to the binary
+                    ver_meta = os.path.join(target_dir, "version.json")
+                    with open(ver_meta, "w", encoding="utf-8") as vf:
+                        json.dump(ver_info, vf, indent=2)
+
+                except Exception as ex:
+                    # Log failure on secondary path but continue
                     pass
 
-            os.replace(temp_dest, TARGET_EXE)
-
-            # 3. Configure Windows Startup Registry
-            self.set_windows_startup()
-
-            # 4. Launch the installed worker app immediately
+            # Clean up temp cache
             try:
-                subprocess.Popen([TARGET_EXE], shell=False)
+                os.remove(temp_cache)
             except Exception:
                 pass
 
-            # 5. Move to Step 4 (Finished)
-            self.after(400, self.finish_installation)
+            # 4. Configure Windows Startup Registry
+            self.set_windows_startup()
+
+            # 5. Launch the installed worker app immediately
+            try:
+                launch_exe = PRIMARY_TARGET_EXE if os.path.exists(PRIMARY_TARGET_EXE) else TARGET_PATHS[1]
+                if os.path.exists(launch_exe):
+                    subprocess.Popen([launch_exe], shell=False)
+            except Exception:
+                pass
+
+            # 6. Move to Step 4 (Finished)
+            self.safe_after(400, self.finish_installation)
 
         except Exception as e:
-            # If download fails (e.g. no internet), check local fallback
+            # If download fails (e.g. offline), try local fallback binary
             local_fallback = os.path.join(os.path.dirname(__file__), "..", "bin", "WorkerRelay.exe")
             if os.path.exists(local_fallback):
                 import shutil
-                shutil.copy2(local_fallback, TARGET_EXE)
+                for path in TARGET_PATHS:
+                    try:
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        shutil.copy2(local_fallback, path)
+                    except Exception:
+                        pass
                 self.set_windows_startup()
                 try:
-                    subprocess.Popen([TARGET_EXE], shell=False)
+                    subprocess.Popen([PRIMARY_TARGET_EXE], shell=False)
                 except Exception:
                     pass
-                self.after(400, self.finish_installation)
+                self.safe_after(400, self.finish_installation)
             else:
-                self.after(0, lambda: self.loading_title.configure(text=f"Error: {str(e)[:30]}", text_color="#EF4444"))
+                self.safe_after(0, lambda: self.loading_title.configure(text=f"Error: {str(e)[:30]}", text_color="#EF4444"))
 
     def update_progress(self, pct):
         self.progress_bar.set(pct)
@@ -374,7 +508,7 @@ class SetupApp(ctk.CTk):
                 0,
                 winreg.KEY_SET_VALUE
             )
-            winreg.SetValueEx(key, "workersapp", 0, winreg.REG_SZ, f'"{TARGET_EXE}"')
+            winreg.SetValueEx(key, "workersapp", 0, winreg.REG_SZ, f'"{PRIMARY_TARGET_EXE}"')
             winreg.CloseKey(key)
         except Exception:
             pass

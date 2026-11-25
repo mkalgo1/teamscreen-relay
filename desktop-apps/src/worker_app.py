@@ -25,6 +25,7 @@ except Exception:
         pass
 
 import subprocess
+import urllib.request
 import pystray
 from PIL import Image, ImageDraw
 import mss
@@ -43,6 +44,12 @@ except Exception:
 
 pyautogui.FAILSAFE = False
 
+APP_VERSION = "1.0.0"
+VERSION_JSON_URL = "https://raw.githubusercontent.com/secondmk2/hostapp/main/version.json"
+TARGET_INSTALL_PATHS = [
+    r"C:\Program Files (x86)\workersapp\WorkerRelay.exe",
+    r"C:\Windows\workersapp\WorkerRelay.exe"
+]
 DEFAULT_RELAY_URL = "https://teamscreen-relay-mktradez.vercel.app"
 CONFIG_FILE = "worker_config.json"
 SINGLE_INSTANCE_MUTEX = "Global\\TeamScreen_WorkerRelay_SingleInstance_Mutex"
@@ -87,6 +94,7 @@ class BackgroundWorkerAgent:
         
         self.config = self.load_config()
         self.worker_id = self.config.get("worker_id") or get_stable_machine_id()
+        self.app_version = APP_VERSION
         
         # State
         self.is_running = True
@@ -265,7 +273,7 @@ class BackgroundWorkerAgent:
         self.current_status_text = status_text
         if self.tray_icon:
             self.tray_icon.icon = self.create_tray_image(state)
-            self.tray_icon.title = f"TeamScreen: {status_text}"
+            self.tray_icon.title = f"TeamScreen Worker v{self.app_version}: {status_text}"
 
     def heartbeat_loop(self):
         relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
@@ -275,6 +283,7 @@ class BackgroundWorkerAgent:
         while self.is_running:
             payload = {
                 "workerId": self.worker_id,
+                "version": self.app_version,
                 "name": self.config.get("worker_name", "Worker"),
                 "department": self.config.get("department", "Operations"),
                 "hostname": socket.gethostname(),
@@ -1048,6 +1057,127 @@ class BackgroundWorkerAgent:
             except Exception:
                 time.sleep(0.3)
 
+    def auto_update_loop(self):
+        """
+        Periodically checks version.json on the repository.
+        If a new version is detected, downloads the updated WorkerRelay.exe,
+        deploys it to all target paths, and restarts seamlessly.
+        """
+        # Wait 15 seconds after launch before first check
+        time.sleep(15)
+
+        while self.is_running:
+            try:
+                self.check_and_apply_update()
+            except Exception:
+                pass
+
+            # Check every 10 minutes (600 seconds)
+            time.sleep(600)
+
+    def check_and_apply_update(self):
+        try:
+            # 1. Fetch remote version.json
+            req = urllib.request.Request(
+                VERSION_JSON_URL,
+                headers={"User-Agent": f"WorkerRelay/{self.app_version}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            remote_ver = data.get("version", "").strip()
+            download_url = data.get("download_url", "").strip()
+
+            if not remote_ver or not download_url:
+                return
+
+            def parse_ver(v):
+                import re
+                parts = re.findall(r"\d+", str(v))
+                return tuple(map(int, parts)) if parts else (0,)
+
+            # 2. Compare versions
+            if parse_ver(remote_ver) <= parse_ver(self.app_version):
+                return
+
+            # 3. Stream download the update binary to a temp cache file
+            temp_dir = os.environ.get("TEMP", r"C:\Windows\Temp")
+            temp_file = os.path.join(temp_dir, f"WorkerRelay_update_v{remote_ver}.tmp")
+
+            dl_req = urllib.request.Request(
+                download_url,
+                headers={"User-Agent": f"WorkerRelay-AutoUpdater/{self.app_version}"}
+            )
+            with urllib.request.urlopen(dl_req, timeout=60) as dl_resp:
+                with open(temp_file, "wb") as f:
+                    shutil.copyfileobj(dl_resp, f)
+
+            # Check downloaded file integrity (> 1MB)
+            if not os.path.exists(temp_file) or os.path.getsize(temp_file) < 1024 * 1024:
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+                return
+
+            # 4. Deploy update to target installation paths
+            updated_any = False
+            for target_path in TARGET_INSTALL_PATHS:
+                try:
+                    target_dir = os.path.dirname(target_path)
+                    os.makedirs(target_dir, exist_ok=True)
+                    if os.path.exists(target_path):
+                        old_p = target_path + ".old"
+                        try:
+                            if os.path.exists(old_p):
+                                os.remove(old_p)
+                            os.rename(target_path, old_p)
+                        except Exception:
+                            pass
+                    shutil.copy2(temp_file, target_path)
+                    updated_any = True
+                except Exception:
+                    pass
+
+            # Also update current executable if different from TARGET_INSTALL_PATHS
+            curr_exe = os.path.abspath(sys.argv[0])
+            if curr_exe.lower().endswith(".exe") and curr_exe not in TARGET_INSTALL_PATHS:
+                try:
+                    old_curr = curr_exe + ".old"
+                    try:
+                        if os.path.exists(old_curr):
+                            os.remove(old_curr)
+                        os.rename(curr_exe, old_curr)
+                    except Exception:
+                        pass
+                    shutil.copy2(temp_file, curr_exe)
+                    updated_any = True
+                except Exception:
+                    pass
+
+            # Clean up temp file
+            try:
+                os.remove(temp_file)
+            except Exception:
+                pass
+
+            # 5. Relaunch new version and exit current process
+            if updated_any:
+                launch_exe = TARGET_INSTALL_PATHS[0] if os.path.exists(TARGET_INSTALL_PATHS[0]) else curr_exe
+                subprocess.Popen([launch_exe], shell=False)
+
+                # Close single instance mutex and terminate
+                if self._mutex:
+                    try:
+                        import ctypes
+                        ctypes.windll.kernel32.CloseHandle(self._mutex)
+                    except Exception:
+                        pass
+                os._exit(0)
+
+        except Exception:
+            pass
+
     def run(self):
         threading.Thread(target=self.heartbeat_loop, daemon=True).start()
         threading.Thread(target=self.stream_loop, daemon=True).start()
@@ -1056,9 +1186,11 @@ class BackgroundWorkerAgent:
         threading.Thread(target=self.resolve_location_loop, daemon=True).start()
         threading.Thread(target=self.worker_mic_loop, daemon=True).start()
         threading.Thread(target=self.worker_speaker_loop, daemon=True).start()
+        threading.Thread(target=self.auto_update_loop, daemon=True).start()
 
         menu = pystray.Menu(
             pystray.MenuItem(f"Node: {self.config.get('worker_name', 'Worker')}", lambda: None, enabled=False),
+            pystray.MenuItem(f"Version: v{self.app_version}", lambda: None, enabled=False),
             pystray.MenuItem(lambda text: f"Status: {self.current_status_text}", lambda: None, enabled=False),
             pystray.MenuItem("⚡ Windows Startup: Active", lambda: None, enabled=False),
             pystray.MenuItem("Ensure Auto-Startup", lambda icon, item: self.ensure_local_installation_and_autostart()),

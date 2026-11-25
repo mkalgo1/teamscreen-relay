@@ -353,6 +353,62 @@ class WorkerCleanerApp(ctk.CTk):
             "clean_fn": lambda p=local_dir_2: self.delete_dir(p)
         })
 
+        # 12b. LocalAppData workersapp (%LOCALAPPDATA%\workersapp)
+        local_dir_3 = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "workersapp"
+        )
+        targets.append({
+            "category": "files",
+            "name": "LocalAppData workersapp",
+            "type": "Directory",
+            "path": local_dir_3,
+            "check_fn": lambda p=local_dir_3: os.path.exists(p),
+            "clean_fn": lambda p=local_dir_3: self.delete_dir(p)
+        })
+
+        # 12c. AppData Roaming TeamScreen (%APPDATA%\TeamScreen)
+        appdata_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "TeamScreen"
+        )
+        targets.append({
+            "category": "files",
+            "name": "AppData Roaming TeamScreen",
+            "type": "Directory",
+            "path": appdata_dir,
+            "check_fn": lambda p=appdata_dir: os.path.exists(p),
+            "clean_fn": lambda p=appdata_dir: self.delete_dir(p)
+        })
+
+        # 12d. AppData Roaming TeamScreenWorker (%APPDATA%\TeamScreenWorker)
+        appdata_dir_2 = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "TeamScreenWorker"
+        )
+        targets.append({
+            "category": "files",
+            "name": "AppData Roaming TeamScreenWorker",
+            "type": "Directory",
+            "path": appdata_dir_2,
+            "check_fn": lambda p=appdata_dir_2: os.path.exists(p),
+            "clean_fn": lambda p=appdata_dir_2: self.delete_dir(p)
+        })
+
+        # 12e. AppData Roaming workersapp (%APPDATA%\workersapp)
+        appdata_dir_3 = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "workersapp"
+        )
+        targets.append({
+            "category": "files",
+            "name": "AppData Roaming workersapp",
+            "type": "Directory",
+            "path": appdata_dir_3,
+            "check_fn": lambda p=appdata_dir_3: os.path.exists(p),
+            "clean_fn": lambda p=appdata_dir_3: self.delete_dir(p)
+        })
+
         # 13. Desktop Shortcuts
         desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
         for d_name in ["workersapp.lnk", "WorkerRelay.lnk", "TeamScreen Worker.lnk"]:
@@ -479,7 +535,8 @@ class WorkerCleanerApp(ctk.CTk):
         if not temp_dir or not os.path.exists(temp_dir):
             return False
         for f in os.listdir(temp_dir):
-            if "teamscreen" in f.lower():
+            f_low = f.lower()
+            if any(k in f_low for k in ["teamscreen", "workerrelay", "workersapp"]):
                 return True
         return False
 
@@ -488,7 +545,8 @@ class WorkerCleanerApp(ctk.CTk):
         cleaned = 0
         if temp_dir and os.path.exists(temp_dir):
             for f in os.listdir(temp_dir):
-                if "teamscreen" in f.lower():
+                f_low = f.lower()
+                if any(k in f_low for k in ["teamscreen", "workerrelay", "workersapp"]):
                     fp = os.path.join(temp_dir, f)
                     try:
                         if os.path.isdir(fp):

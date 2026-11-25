@@ -9,6 +9,7 @@ import sys
 import os
 import time
 import shutil
+import subprocess
 import threading
 import winreg
 import psutil
@@ -208,17 +209,27 @@ class WorkerCleanerApp(ctk.CTk):
             "clean_fn": self.kill_processes
         })
 
-        # 2. Registry: HKCU Run Key
+        # 2. Registry: HKCU Run Key (workersapp)
         targets.append({
             "category": "registry",
-            "name": "HKCU Startup Run Key",
+            "name": "HKCU Run Key (workersapp)",
+            "type": "Registry",
+            "path": r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\workersapp",
+            "check_fn": lambda: self.check_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "workersapp"),
+            "clean_fn": lambda: self.delete_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "workersapp")
+        })
+
+        # 3. Registry: HKCU Run Key (TeamScreenWorker)
+        targets.append({
+            "category": "registry",
+            "name": "HKCU Startup Run Key (TeamScreenWorker)",
             "type": "Registry",
             "path": r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\TeamScreenWorker",
             "check_fn": lambda: self.check_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "TeamScreenWorker"),
             "clean_fn": lambda: self.delete_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "TeamScreenWorker")
         })
 
-        # 3. Registry: HKCU Run Key Legacy (TeamScreen)
+        # 4. Registry: HKCU Run Key Legacy (TeamScreen)
         targets.append({
             "category": "registry",
             "name": "HKCU Legacy Run Key",
@@ -228,47 +239,123 @@ class WorkerCleanerApp(ctk.CTk):
             "clean_fn": lambda: self.delete_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "TeamScreen")
         })
 
-        # 4. Startup Folder Shortcut: User
+        # 5. Registry: HKLM Run Key (workersapp)
+        targets.append({
+            "category": "registry",
+            "name": "HKLM Run Key (workersapp)",
+            "type": "Registry",
+            "path": r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run\workersapp",
+            "check_fn": lambda: self.check_reg_value(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "workersapp"),
+            "clean_fn": lambda: self.delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "workersapp")
+        })
+
+        # 6. Startup Folder Shortcuts
         startup_dir = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")),
             r"Microsoft\Windows\Start Menu\Programs\Startup"
         )
-        user_shortcut = os.path.join(startup_dir, "TeamScreen Worker.lnk")
+        for s_name in ["workersapp.lnk", "WorkerRelay.lnk", "TeamScreen Worker.lnk", "TeamScreen.lnk"]:
+            s_path = os.path.join(startup_dir, s_name)
+            targets.append({
+                "category": "startup",
+                "name": f"Startup Shortcut ({s_name})",
+                "type": "Shortcut (.lnk)",
+                "path": s_path,
+                "check_fn": lambda p=s_path: os.path.exists(p),
+                "clean_fn": lambda p=s_path: self.delete_file(p)
+            })
+
+        # 7. Common Startup Folder
+        common_startup = os.path.join(
+            os.environ.get("ProgramData", r"C:\ProgramData"),
+            r"Microsoft\Windows\Start Menu\Programs\Startup"
+        )
+        for s_name in ["workersapp.lnk", "WorkerRelay.lnk", "TeamScreen Worker.lnk"]:
+            s_path = os.path.join(common_startup, s_name)
+            targets.append({
+                "category": "startup",
+                "name": f"All Users Startup ({s_name})",
+                "type": "Shortcut (.lnk)",
+                "path": s_path,
+                "check_fn": lambda p=s_path: os.path.exists(p),
+                "clean_fn": lambda p=s_path: self.delete_file(p)
+            })
+
+        # 8. New Installer Installation Directory: C:\Program Files (x86)\workersapp
+        pfx86_dir = r"C:\Program Files (x86)\workersapp"
         targets.append({
-            "category": "startup",
-            "name": "Startup Folder Shortcut",
-            "type": "Shortcut (.lnk)",
-            "path": user_shortcut,
-            "check_fn": lambda p=user_shortcut: os.path.exists(p),
-            "clean_fn": lambda p=user_shortcut: self.delete_file(p)
+            "category": "files",
+            "name": "Program Files (x86) workersapp",
+            "type": "Directory",
+            "path": pfx86_dir,
+            "check_fn": lambda p=pfx86_dir: os.path.exists(p),
+            "clean_fn": lambda p=pfx86_dir: self.delete_dir(p)
         })
 
-        # 5. Startup Folder Shortcut: Secondary / Legacy
-        user_shortcut_2 = os.path.join(startup_dir, "TeamScreen.lnk")
+        # 9. Program Files Directory: C:\Program Files\TeamScreen Worker
+        pf_dir = r"C:\Program Files\TeamScreen Worker"
         targets.append({
-            "category": "startup",
-            "name": "Secondary Startup Shortcut",
-            "type": "Shortcut (.lnk)",
-            "path": user_shortcut_2,
-            "check_fn": lambda p=user_shortcut_2: os.path.exists(p),
-            "clean_fn": lambda p=user_shortcut_2: self.delete_file(p)
+            "category": "files",
+            "name": "Program Files TeamScreen Worker",
+            "type": "Directory",
+            "path": pf_dir,
+            "check_fn": lambda p=pf_dir: os.path.exists(p),
+            "clean_fn": lambda p=pf_dir: self.delete_dir(p)
         })
 
-        # 6. LocalAppData Installation Directory (%LOCALAPPDATA%\TeamScreen)
+        # 10. Program Files Directory: C:\Program Files\workersapp
+        pf2_dir = r"C:\Program Files\workersapp"
+        targets.append({
+            "category": "files",
+            "name": "Program Files workersapp",
+            "type": "Directory",
+            "path": pf2_dir,
+            "check_fn": lambda p=pf2_dir: os.path.exists(p),
+            "clean_fn": lambda p=pf2_dir: self.delete_dir(p)
+        })
+
+        # 11. LocalAppData Installation Directory (%LOCALAPPDATA%\TeamScreen)
         local_dir = os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
             "TeamScreen"
         )
         targets.append({
             "category": "files",
-            "name": "Installed Worker Directory",
+            "name": "LocalAppData TeamScreen",
             "type": "Directory",
             "path": local_dir,
             "check_fn": lambda p=local_dir: os.path.exists(p),
             "clean_fn": lambda p=local_dir: self.delete_dir(p)
         })
 
-        # 7. Local Config File in Current Directory
+        # 12. LocalAppData TeamScreenWorker (%LOCALAPPDATA%\TeamScreenWorker)
+        local_dir_2 = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "TeamScreenWorker"
+        )
+        targets.append({
+            "category": "files",
+            "name": "LocalAppData TeamScreenWorker",
+            "type": "Directory",
+            "path": local_dir_2,
+            "check_fn": lambda p=local_dir_2: os.path.exists(p),
+            "clean_fn": lambda p=local_dir_2: self.delete_dir(p)
+        })
+
+        # 13. Desktop Shortcuts
+        desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+        for d_name in ["workersapp.lnk", "WorkerRelay.lnk", "TeamScreen Worker.lnk"]:
+            d_path = os.path.join(desktop_dir, d_name)
+            targets.append({
+                "category": "files",
+                "name": f"Desktop Shortcut ({d_name})",
+                "type": "Shortcut (.lnk)",
+                "path": d_path,
+                "check_fn": lambda p=d_path: os.path.exists(p),
+                "clean_fn": lambda p=d_path: self.delete_file(p)
+            })
+
+        # 14. Local Config File in Current Directory
         cur_cfg = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "worker_config.json")
         targets.append({
             "category": "files",
@@ -279,7 +366,7 @@ class WorkerCleanerApp(ctk.CTk):
             "clean_fn": lambda p=cur_cfg: self.delete_file(p)
         })
 
-        # 8. User Temp Directory Caches (%TEMP%\TeamScreen*)
+        # 15. User Temp Directory Caches (%TEMP%\TeamScreen*)
         temp_dir = os.environ.get("TEMP", "")
         targets.append({
             "category": "files",
@@ -294,10 +381,16 @@ class WorkerCleanerApp(ctk.CTk):
 
     def check_processes(self):
         found = []
+        target_names = [
+            "workerrelay.exe", "workerrelay",
+            "workersetup.exe", "workersetup",
+            "teamscreenworker.exe", "teamscreenworker",
+            "teamscreen.exe", "teamscreen"
+        ]
         for p in psutil.process_iter(["pid", "name"]):
             try:
                 name = (p.info.get("name") or "").lower()
-                if name in ["workerrelay.exe", "workerrelay"]:
+                if name in target_names:
                     found.append(p.info["pid"])
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
@@ -305,14 +398,29 @@ class WorkerCleanerApp(ctk.CTk):
 
     def kill_processes(self):
         killed = 0
+        target_names = [
+            "workerrelay.exe", "workerrelay",
+            "workersetup.exe", "workersetup",
+            "teamscreenworker.exe", "teamscreenworker",
+            "teamscreen.exe", "teamscreen"
+        ]
+        # Step 1: psutil kill
         for p in psutil.process_iter(["pid", "name"]):
             try:
                 name = (p.info.get("name") or "").lower()
-                if name in ["workerrelay.exe", "workerrelay"]:
+                if name in target_names:
                     p.kill()
                     killed += 1
             except Exception:
                 pass
+
+        # Step 2: Forceful taskkill from Task Manager for all variants
+        for exe_name in ["WorkerRelay.exe", "WorkerSetup.exe", "TeamScreenWorker.exe", "TeamScreen.exe"]:
+            try:
+                subprocess.run(["taskkill", "/F", "/IM", exe_name, "/T"], capture_output=True)
+            except Exception:
+                pass
+
         time.sleep(0.5)
         return True, f"Terminated {killed} running process(es)"
 

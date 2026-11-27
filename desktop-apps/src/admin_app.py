@@ -37,8 +37,8 @@ class CEOAdminApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # Executive Dark Theme
-        ctk.set_appearance_mode("dark")
+        # Executive White Pro Max Theme
+        ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
         self.title("CEO Command Center // TeamScreen Relay Pro")
         self.geometry("1340x860")
@@ -135,8 +135,8 @@ class CEOAdminApp(ctk.CTk):
             pass
 
     def setup_ui(self):
-        # --- Top Executive Header ---
-        header = ctk.CTkFrame(self, fg_color="#0F172A", height=66, corner_radius=0)
+        # --- Top Executive Header (Clean White Ceramic) ---
+        header = ctk.CTkFrame(self, fg_color="#FFFFFF", height=66, corner_radius=0)
         header.pack(fill="x", side="top")
 
         title_box = ctk.CTkFrame(header, fg_color="transparent")
@@ -146,7 +146,7 @@ class CEOAdminApp(ctk.CTk):
             title_box,
             text="CEO COMMAND CENTER",
             font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-            text_color="#F8FAFC"
+            text_color="#0F172A"
         )
         title.pack(anchor="w")
 
@@ -154,7 +154,7 @@ class CEOAdminApp(ctk.CTk):
             title_box,
             text="Ultra-Fast Screen Guidance, Precision Remote Input & Remote File Manager",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#94A3B8"
+            text_color="#64748B"
         )
         subtitle.pack(anchor="w")
 
@@ -166,8 +166,9 @@ class CEOAdminApp(ctk.CTk):
             config_box,
             placeholder_text="Vercel Relay URL",
             width=290,
-            fg_color="#1E293B",
-            border_color="#334155"
+            fg_color="#F8FAFC",
+            border_color="#CBD5E1",
+            text_color="#0F172A"
         )
         self.url_entry.insert(0, self.relay_url)
         self.url_entry.pack(side="left", padx=(0, 8))
@@ -176,18 +177,19 @@ class CEOAdminApp(ctk.CTk):
             config_box,
             text="Save URL",
             width=76,
-            fg_color="#3B82F6",
-            hover_color="#2563EB",
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            text_color="#FFFFFF",
             command=self.apply_url
         )
         apply_btn.pack(side="left")
 
         # --- Main Layout: Left Sidebar + Right Viewport ---
-        main_container = ctk.CTkFrame(self, fg_color="#0B0F17", corner_radius=0)
+        main_container = ctk.CTkFrame(self, fg_color="#F8FAFC", corner_radius=0)
         main_container.pack(fill="both", expand=True)
 
-        # Left Sidebar (Active Workers Fleet)
-        self.sidebar = ctk.CTkFrame(main_container, fg_color="#111827", width=335, corner_radius=0)
+        # Left Sidebar (Active Workers Fleet - Clean White)
+        self.sidebar = ctk.CTkFrame(main_container, fg_color="#FFFFFF", width=335, corner_radius=0)
         self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
         self.sidebar.pack_propagate(False)
 
@@ -198,7 +200,7 @@ class CEOAdminApp(ctk.CTk):
             sidebar_header,
             text="ACTIVE FLEET",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            text_color="#CBD5E1"
+            text_color="#0F172A"
         )
         fleet_label.pack(side="left")
 
@@ -215,9 +217,12 @@ class CEOAdminApp(ctk.CTk):
             text="🧹 Clear",
             width=58,
             height=24,
-            fg_color="#1E293B",
-            hover_color="#334155",
-            font=ctk.CTkFont(size=10),
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
+            font=ctk.CTkFont(size=10, weight="bold"),
             command=self.purge_inactive_workers
         )
         clear_btn.pack(side="right", padx=(0, 6))
@@ -226,8 +231,9 @@ class CEOAdminApp(ctk.CTk):
         self.search_entry = ctk.CTkEntry(
             self.sidebar,
             placeholder_text="Search workers...",
-            fg_color="#1F2937",
-            border_color="#374151"
+            fg_color="#F8FAFC",
+            border_color="#CBD5E1",
+            text_color="#0F172A"
         )
         self.search_entry.pack(fill="x", padx=16, pady=(0, 10))
 
@@ -236,31 +242,31 @@ class CEOAdminApp(ctk.CTk):
         self.workers_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 12))
 
         # Right Main Viewport Area
-        self.viewport_container = ctk.CTkFrame(main_container, fg_color="#090D16", corner_radius=0)
+        self.viewport_container = ctk.CTkFrame(main_container, fg_color="#F8FAFC", corner_radius=0)
         self.viewport_container.pack(side="right", fill="both", expand=True)
 
         # Viewport Header Toolbar
-        self.vp_header = ctk.CTkFrame(self.viewport_container, fg_color="#131B2E", height=58, corner_radius=0)
+        self.vp_header = ctk.CTkFrame(self.viewport_container, fg_color="#FFFFFF", height=58, corner_radius=0)
         self.vp_header.pack(fill="x", side="top")
 
         self.vp_title = ctk.CTkLabel(
             self.vp_header,
             text="No Worker Selected",
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
-            text_color="#94A3B8"
+            text_color="#0F172A"
         )
         self.vp_title.pack(side="left", padx=16, pady=12)
 
         self.vp_stats = ctk.CTkLabel(
             self.vp_header,
             text="",
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#38BDF8"
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#2563EB"
         )
         self.vp_stats.pack(side="left", padx=6)
 
         # Top Navigation Bar (Switch between Live Screen, Remote Files, Customer Logs, Worker GPS)
-        self.nav_bar = ctk.CTkFrame(self.vp_header, fg_color="#0F172A", corner_radius=8, border_color="#1E293B", border_width=1)
+        self.nav_bar = ctk.CTkFrame(self.vp_header, fg_color="#F1F5F9", corner_radius=8, border_color="#E2E8F0", border_width=1)
         self.nav_bar.pack(side="right", padx=14, pady=10)
 
         self.nav_btn_stream = ctk.CTkButton(
@@ -281,8 +287,8 @@ class CEOAdminApp(ctk.CTk):
             text="📁 Remote Files",
             font=ctk.CTkFont(family="Segoe UI", size=12),
             fg_color="transparent",
-            hover_color="#1E293B",
-            text_color="#94A3B8",
+            hover_color="#E2E8F0",
+            text_color="#64748B",
             width=115,
             height=34,
             corner_radius=6,
@@ -295,8 +301,8 @@ class CEOAdminApp(ctk.CTk):
             text="📞 Customer Logs",
             font=ctk.CTkFont(family="Segoe UI", size=12),
             fg_color="transparent",
-            hover_color="#1E293B",
-            text_color="#94A3B8",
+            hover_color="#E2E8F0",
+            text_color="#64748B",
             width=125,
             height=34,
             corner_radius=6,
@@ -309,8 +315,8 @@ class CEOAdminApp(ctk.CTk):
             text="📍 Worker GPS",
             font=ctk.CTkFont(family="Segoe UI", size=12),
             fg_color="transparent",
-            hover_color="#1E293B",
-            text_color="#94A3B8",
+            hover_color="#E2E8F0",
+            text_color="#64748B",
             width=115,
             height=34,
             corner_radius=6,
@@ -332,21 +338,21 @@ class CEOAdminApp(ctk.CTk):
         self.stream_view_frame.pack(fill="both", expand=True)
 
         # Stream Action Toolbar (Live Status, FPS, and Remote Controls)
-        self.stream_action_bar = ctk.CTkFrame(self.stream_view_frame, fg_color="#111827", height=46, corner_radius=8, border_color="#1F2937", border_width=1)
+        self.stream_action_bar = ctk.CTkFrame(self.stream_view_frame, fg_color="#FFFFFF", height=46, corner_radius=8, border_color="#E2E8F0", border_width=1)
         self.stream_action_bar.pack(fill="x", pady=(0, 6))
 
         # Left: Stream Status Indicator & FPS
         sab_left = ctk.CTkFrame(self.stream_action_bar, fg_color="transparent")
         sab_left.pack(side="left", padx=12, pady=6)
 
-        self.stream_status_dot = ctk.CTkLabel(sab_left, text="●", text_color="#64748B", font=ctk.CTkFont(size=14))
+        self.stream_status_dot = ctk.CTkLabel(sab_left, text="●", text_color="#94A3B8", font=ctk.CTkFont(size=14))
         self.stream_status_dot.pack(side="left", padx=(0, 6))
 
         self.stream_status_text = ctk.CTkLabel(
             sab_left,
             text="STREAM IDLE",
             font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-            text_color="#94A3B8"
+            text_color="#64748B"
         )
         self.stream_status_text.pack(side="left")
 
@@ -354,7 +360,7 @@ class CEOAdminApp(ctk.CTk):
             sab_left,
             text="",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            text_color="#38BDF8"
+            text_color="#2563EB"
         )
         self.vp_fps_badge.pack(side="left", padx=(10, 0))
 
@@ -369,6 +375,7 @@ class CEOAdminApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             fg_color="#10B981",
             hover_color="#059669",
+            text_color="#FFFFFF",
             width=135,
             height=32,
             command=self.toggle_stream_session
@@ -381,8 +388,11 @@ class CEOAdminApp(ctk.CTk):
             sab_right,
             text="🖱️ Remote Input: OFF",
             font=ctk.CTkFont(family="Segoe UI", size=12),
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=150,
             height=32,
             command=self.toggle_remote_input
@@ -395,8 +405,11 @@ class CEOAdminApp(ctk.CTk):
             sab_right,
             text="⏺️ Record MP4",
             font=ctk.CTkFont(family="Segoe UI", size=12),
-            fg_color="#7C2D12",
-            hover_color="#991B1B",
+            fg_color="#FFF1F2",
+            hover_color="#FFE4E6",
+            text_color="#E11D48",
+            border_color="#FECDD3",
+            border_width=1,
             width=120,
             height=32,
             command=self.toggle_recording
@@ -409,8 +422,11 @@ class CEOAdminApp(ctk.CTk):
             sab_right,
             text="⚡ Auto-Startup",
             font=ctk.CTkFont(family="Segoe UI", size=12),
-            fg_color="#1E293B",
-            hover_color="#334155",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=115,
             height=32,
             command=self.remote_ensure_autostart
@@ -423,8 +439,11 @@ class CEOAdminApp(ctk.CTk):
             sab_right,
             text="🎧 Worker Mic: OFF",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=135,
             height=32,
             command=self.toggle_worker_mic
@@ -437,8 +456,11 @@ class CEOAdminApp(ctk.CTk):
             sab_right,
             text="🎙️ Speak: OFF",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=115,
             height=32,
             command=self.toggle_ceo_mic
@@ -446,12 +468,12 @@ class CEOAdminApp(ctk.CTk):
         self.ceo_mic_btn.pack(side="left", padx=4)
         self.ceo_mic_btn.configure(state="disabled")
 
-        self.canvas_frame = ctk.CTkFrame(self.stream_view_frame, fg_color="#030712", corner_radius=8)
+        self.canvas_frame = ctk.CTkFrame(self.stream_view_frame, fg_color="#0F172A", border_color="#E2E8F0", border_width=1, corner_radius=10)
         self.canvas_frame.pack(fill="both", expand=True)
 
         self.screen_canvas = tk.Canvas(
             self.canvas_frame,
-            bg="#030712",
+            bg="#0F172A",
             highlightthickness=0,
             cursor=""
         )
@@ -461,48 +483,48 @@ class CEOAdminApp(ctk.CTk):
         self.canvas_placeholder = self.screen_canvas.create_text(
             400, 250,
             text="Select an active worker on the left to begin live observation.",
-            fill="#475569",
+            fill="#64748B",
             font=("Segoe UI", 13)
         )
 
         # --- REMOTE FILE & FOLDER EXPLORER VIEW WIDGETS ---
-        self.file_view_frame = ctk.CTkFrame(self.center_area, fg_color="#0F172A", corner_radius=8)
+        self.file_view_frame = ctk.CTkFrame(self.center_area, fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1, corner_radius=8)
 
         # File Manager Navigation Bar (Path & Shortcuts)
-        fm_nav_top = ctk.CTkFrame(self.file_view_frame, fg_color="#1E293B", height=46, corner_radius=6)
+        fm_nav_top = ctk.CTkFrame(self.file_view_frame, fg_color="#F8FAFC", height=46, corner_radius=6, border_color="#E2E8F0", border_width=1)
         fm_nav_top.pack(fill="x", padx=12, pady=(12, 4))
 
-        up_btn = ctk.CTkButton(fm_nav_top, text="⬆️ Up", width=65, fg_color="#334155", hover_color="#475569", command=self.navigate_up_folder)
+        up_btn = ctk.CTkButton(fm_nav_top, text="⬆️ Up", width=65, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=self.navigate_up_folder)
         up_btn.pack(side="left", padx=4)
 
-        refresh_btn = ctk.CTkButton(fm_nav_top, text="🔄 Refresh", width=75, fg_color="#334155", hover_color="#475569", command=self.refresh_current_folder)
+        refresh_btn = ctk.CTkButton(fm_nav_top, text="🔄 Refresh", width=75, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=self.refresh_current_folder)
         refresh_btn.pack(side="left", padx=3)
 
-        self.fm_path_entry = ctk.CTkEntry(fm_nav_top, fg_color="#0F172A", border_color="#334155")
+        self.fm_path_entry = ctk.CTkEntry(fm_nav_top, fg_color="#FFFFFF", border_color="#CBD5E1", text_color="#0F172A")
         self.fm_path_entry.pack(side="left", fill="x", expand=True, padx=6)
         self.fm_path_entry.bind("<Return>", lambda e: self.request_browse_folder(self.fm_path_entry.get().strip()))
 
-        go_btn = ctk.CTkButton(fm_nav_top, text="Go", width=50, fg_color="#2563EB", hover_color="#1D4ED8", command=lambda: self.request_browse_folder(self.fm_path_entry.get().strip()))
+        go_btn = ctk.CTkButton(fm_nav_top, text="Go", width=50, fg_color="#2563EB", hover_color="#1D4ED8", text_color="#FFFFFF", command=lambda: self.request_browse_folder(self.fm_path_entry.get().strip()))
         go_btn.pack(side="left", padx=3)
 
         # Quick Jump Buttons
-        desktop_btn = ctk.CTkButton(fm_nav_top, text="Desktop", width=70, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("DESKTOP"))
+        desktop_btn = ctk.CTkButton(fm_nav_top, text="Desktop", width=70, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("DESKTOP"))
         desktop_btn.pack(side="left", padx=2)
 
-        docs_btn = ctk.CTkButton(fm_nav_top, text="Documents", width=80, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("DOCUMENTS"))
+        docs_btn = ctk.CTkButton(fm_nav_top, text="Documents", width=80, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("DOCUMENTS"))
         docs_btn.pack(side="left", padx=2)
 
-        downloads_btn = ctk.CTkButton(fm_nav_top, text="Downloads", width=80, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("DOWNLOADS"))
+        downloads_btn = ctk.CTkButton(fm_nav_top, text="Downloads", width=80, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("DOWNLOADS"))
         downloads_btn.pack(side="left", padx=2)
 
-        c_drive_btn = ctk.CTkButton(fm_nav_top, text="C:\\", width=45, fg_color="#1E3A5F", hover_color="#1D4ED8", command=lambda: self.request_browse_folder("C:\\"))
+        c_drive_btn = ctk.CTkButton(fm_nav_top, text="C:\\", width=45, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("C:\\"))
         c_drive_btn.pack(side="left", padx=2)
 
-        trash_jump_btn = ctk.CTkButton(fm_nav_top, text="🗑️ Recycle Bin", width=105, fg_color="#7F1D1D", hover_color="#991B1B", command=self.browse_recycle_bin)
+        trash_jump_btn = ctk.CTkButton(fm_nav_top, text="🗑️ Recycle Bin", width=105, fg_color="#FFF1F2", hover_color="#FFE4E6", text_color="#BE123C", border_color="#FECDD3", border_width=1, command=self.browse_recycle_bin)
         trash_jump_btn.pack(side="left", padx=(2, 6))
 
         # File Action Toolbar (Upload, Download/Open, Launch on Worker, Copy, Cut, Paste, Delete, Trash)
-        fm_actions_bar = ctk.CTkFrame(self.file_view_frame, fg_color="#131B2E", height=44, corner_radius=6)
+        fm_actions_bar = ctk.CTkFrame(self.file_view_frame, fg_color="#F8FAFC", height=44, corner_radius=6, border_color="#E2E8F0", border_width=1)
         fm_actions_bar.pack(fill="x", padx=12, pady=(0, 6))
 
         upload_btn = ctk.CTkButton(
@@ -510,6 +532,7 @@ class CEOAdminApp(ctk.CTk):
             text="📤 Upload",
             fg_color="#10B981",
             hover_color="#059669",
+            text_color="#FFFFFF",
             width=90,
             command=self.send_file_to_worker
         )
@@ -518,8 +541,9 @@ class CEOAdminApp(ctk.CTk):
         self.download_btn = ctk.CTkButton(
             fm_actions_bar,
             text="📥 Download",
-            fg_color="#3B82F6",
-            hover_color="#2563EB",
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            text_color="#FFFFFF",
             width=100,
             command=self.download_selected_file
         )
@@ -528,8 +552,9 @@ class CEOAdminApp(ctk.CTk):
         self.launch_btn = ctk.CTkButton(
             fm_actions_bar,
             text="🖥️ Launch",
-            fg_color="#8B5CF6",
-            hover_color="#7C3AED",
+            fg_color="#7C3AED",
+            hover_color="#6D28D9",
+            text_color="#FFFFFF",
             width=85,
             command=self.launch_selected_file_on_worker
         )
@@ -538,8 +563,11 @@ class CEOAdminApp(ctk.CTk):
         new_folder_btn = ctk.CTkButton(
             fm_actions_bar,
             text="📁 New Folder",
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=95,
             command=self.create_remote_folder
         )
@@ -548,8 +576,11 @@ class CEOAdminApp(ctk.CTk):
         self.copy_btn = ctk.CTkButton(
             fm_actions_bar,
             text="📋 Copy",
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=70,
             command=self.copy_selected_item
         )
@@ -558,8 +589,11 @@ class CEOAdminApp(ctk.CTk):
         self.cut_btn = ctk.CTkButton(
             fm_actions_bar,
             text="✂️ Cut",
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=65,
             command=self.cut_selected_item
         )
@@ -568,8 +602,11 @@ class CEOAdminApp(ctk.CTk):
         self.paste_btn = ctk.CTkButton(
             fm_actions_bar,
             text="📌 Paste",
-            fg_color="#1E293B",
-            hover_color="#0D9488",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=75,
             state="disabled",
             command=self.paste_item
@@ -579,8 +616,11 @@ class CEOAdminApp(ctk.CTk):
         self.delete_btn = ctk.CTkButton(
             fm_actions_bar,
             text="🗑️ Delete",
-            fg_color="#7F1D1D",
-            hover_color="#991B1B",
+            fg_color="#FFF1F2",
+            hover_color="#FFE4E6",
+            text_color="#BE123C",
+            border_color="#FECDD3",
+            border_width=1,
             width=75,
             command=self.delete_selected_item
         )
@@ -589,8 +629,11 @@ class CEOAdminApp(ctk.CTk):
         self.empty_trash_btn = ctk.CTkButton(
             fm_actions_bar,
             text="🧹 Empty Trash",
-            fg_color="#991B1B",
-            hover_color="#7F1D1D",
+            fg_color="#FFF1F2",
+            hover_color="#FFE4E6",
+            text_color="#BE123C",
+            border_color="#FECDD3",
+            border_width=1,
             width=105,
             command=self.empty_recycle_bin
         )
@@ -600,25 +643,25 @@ class CEOAdminApp(ctk.CTk):
             fm_actions_bar,
             text="Select an item to view options",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#94A3B8"
+            text_color="#64748B"
         )
         self.fm_status_lbl.pack(side="right", padx=12)
 
         # File List Scrollable Table
-        self.files_scroll = ctk.CTkScrollableFrame(self.file_view_frame, fg_color="#090D16")
+        self.files_scroll = ctk.CTkScrollableFrame(self.file_view_frame, fg_color="#FFFFFF")
         self.files_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
         # --- CUSTOMER SERVICE CALL & COMMUNICATION LOGS VIEW ---
-        self.cs_logs_view_frame = ctk.CTkFrame(self.center_area, fg_color="#0F172A", corner_radius=8)
+        self.cs_logs_view_frame = ctk.CTkFrame(self.center_area, fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1, corner_radius=8)
 
-        cs_top = ctk.CTkFrame(self.cs_logs_view_frame, fg_color="#1E293B", height=46, corner_radius=6)
+        cs_top = ctk.CTkFrame(self.cs_logs_view_frame, fg_color="#F8FAFC", height=46, corner_radius=6, border_color="#E2E8F0", border_width=1)
         cs_top.pack(fill="x", padx=12, pady=(12, 6))
 
         cs_title = ctk.CTkLabel(
             cs_top,
             text="📞 Customer Service Interactions & Call Logs",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            text_color="#F8FAFC"
+            text_color="#0F172A"
         )
         cs_title.pack(side="left", padx=12)
 
@@ -627,6 +670,7 @@ class CEOAdminApp(ctk.CTk):
             text="📥 Export CSV",
             fg_color="#10B981",
             hover_color="#059669",
+            text_color="#FFFFFF",
             width=100,
             command=self.export_cs_logs_csv
         )
@@ -635,8 +679,11 @@ class CEOAdminApp(ctk.CTk):
         cs_refresh_btn = ctk.CTkButton(
             cs_top,
             text="🔄 Refresh Logs",
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=110,
             command=self.fetch_cs_logs
         )
@@ -646,33 +693,36 @@ class CEOAdminApp(ctk.CTk):
             cs_top,
             text="Ready to load records.",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#94A3B8"
+            text_color="#64748B"
         )
         self.cs_status_lbl.pack(side="right", padx=12)
 
         # Scrollable list for customer logs
-        self.cs_logs_scroll = ctk.CTkScrollableFrame(self.cs_logs_view_frame, fg_color="#090D16")
+        self.cs_logs_scroll = ctk.CTkScrollableFrame(self.cs_logs_view_frame, fg_color="#F8FAFC")
         self.cs_logs_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
         # --- FIELD WORKER GPS & LIVE LOCATION TRACKING VIEW ---
-        self.gps_view_frame = ctk.CTkFrame(self.center_area, fg_color="#0F172A", corner_radius=8)
+        self.gps_view_frame = ctk.CTkFrame(self.center_area, fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1, corner_radius=8)
 
-        gps_top = ctk.CTkFrame(self.gps_view_frame, fg_color="#1E293B", height=46, corner_radius=6)
+        gps_top = ctk.CTkFrame(self.gps_view_frame, fg_color="#F8FAFC", height=46, corner_radius=6, border_color="#E2E8F0", border_width=1)
         gps_top.pack(fill="x", padx=12, pady=(12, 6))
 
         gps_title = ctk.CTkLabel(
             gps_top,
             text="📍 Field Workers Live GPS & Location Verification",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            text_color="#F8FAFC"
+            text_color="#0F172A"
         )
         gps_title.pack(side="left", padx=12)
 
         gps_refresh_btn = ctk.CTkButton(
             gps_top,
             text="🔄 Refresh Map Locations",
-            fg_color="#334155",
-            hover_color="#475569",
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
             width=160,
             command=self.render_gps_locations
         )
@@ -682,24 +732,24 @@ class CEOAdminApp(ctk.CTk):
             gps_top,
             text="Tracking active field devices",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#38BDF8"
+            text_color="#2563EB"
         )
         self.gps_status_lbl.pack(side="right", padx=12)
 
         # Scrollable list for GPS locations
-        self.gps_scroll = ctk.CTkScrollableFrame(self.gps_view_frame, fg_color="#090D16")
+        self.gps_scroll = ctk.CTkScrollableFrame(self.gps_view_frame, fg_color="#F8FAFC")
         self.gps_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
         # --- BOTTOM ACTION BARS ---
         # Remote Keystrokes & Password Injection Console
-        input_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=48, corner_radius=6)
+        input_bar = ctk.CTkFrame(self.viewport_container, fg_color="#FFFFFF", height=48, corner_radius=8, border_color="#E2E8F0", border_width=1)
         input_bar.pack(fill="x", side="bottom", padx=12, pady=(0, 6))
 
         input_title = ctk.CTkLabel(
             input_bar,
             text="REMOTE KEYSTROKES:",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            text_color="#A855F7"
+            text_color="#7C3AED"
         )
         input_title.pack(side="left", padx=(12, 6))
 
@@ -711,7 +761,8 @@ class CEOAdminApp(ctk.CTk):
             command=self.toggle_password_mask,
             checkbox_width=18,
             checkbox_height=18,
-            font=ctk.CTkFont(size=11)
+            font=ctk.CTkFont(size=11),
+            text_color="#334155"
         )
         self.mask_checkbox.pack(side="left", padx=(0, 8))
 
@@ -719,8 +770,9 @@ class CEOAdminApp(ctk.CTk):
             input_bar,
             placeholder_text="Enter password or text to type into worker's focused window...",
             show="*",
-            fg_color="#1E293B",
-            border_color="#334155"
+            fg_color="#F8FAFC",
+            border_color="#CBD5E1",
+            text_color="#0F172A"
         )
         self.key_input.pack(side="left", fill="x", expand=True, padx=6, pady=7)
         self.key_input.bind("<Return>", lambda e: self.send_remote_text())
@@ -728,29 +780,30 @@ class CEOAdminApp(ctk.CTk):
         type_btn = ctk.CTkButton(
             input_bar,
             text="Type into PC",
-            fg_color="#9333EA",
-            hover_color="#7E22CE",
+            fg_color="#7C3AED",
+            hover_color="#6D28D9",
+            text_color="#FFFFFF",
             width=110,
             command=self.send_remote_text
         )
         type_btn.pack(side="left", padx=4)
 
-        enter_btn = ctk.CTkButton(input_bar, text="[Enter]", width=55, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("enter"))
+        enter_btn = ctk.CTkButton(input_bar, text="[Enter]", width=55, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.send_special_key("enter"))
         enter_btn.pack(side="left", padx=2)
-        tab_btn = ctk.CTkButton(input_bar, text="[Tab]", width=50, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("tab"))
+        tab_btn = ctk.CTkButton(input_bar, text="[Tab]", width=50, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.send_special_key("tab"))
         tab_btn.pack(side="left", padx=2)
-        esc_btn = ctk.CTkButton(input_bar, text="[Esc]", width=50, fg_color="#374151", hover_color="#4B5563", command=lambda: self.send_special_key("esc"))
+        esc_btn = ctk.CTkButton(input_bar, text="[Esc]", width=50, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.send_special_key("esc"))
         esc_btn.pack(side="left", padx=(2, 10))
 
         # Bottom CEO Live Interactive Guidance Console
-        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#0F172A", height=48, corner_radius=6)
+        guidance_bar = ctk.CTkFrame(self.viewport_container, fg_color="#FFFFFF", height=48, corner_radius=8, border_color="#E2E8F0", border_width=1)
         guidance_bar.pack(fill="x", side="bottom", padx=12, pady=(0, 8))
 
         guidance_label = ctk.CTkLabel(
             guidance_bar,
             text="CEO GUIDANCE:",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            text_color="#38BDF8"
+            text_color="#2563EB"
         )
         guidance_label.pack(side="left", padx=(12, 6))
 
@@ -760,6 +813,7 @@ class CEOAdminApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             fg_color="#10B981",
             hover_color="#059669",
+            text_color="#FFFFFF",
             width=150,
             height=32,
             command=self.toggle_live_notepad
@@ -770,8 +824,9 @@ class CEOAdminApp(ctk.CTk):
         self.guidance_input = ctk.CTkEntry(
             guidance_bar,
             placeholder_text="Type real-time guidance (syncs live to worker screen Notepad)...",
-            fg_color="#1E293B",
-            border_color="#334155",
+            fg_color="#F8FAFC",
+            border_color="#CBD5E1",
+            text_color="#0F172A",
             height=32
         )
         self.guidance_input.pack(side="left", fill="x", expand=True, padx=6, pady=6)
@@ -782,8 +837,9 @@ class CEOAdminApp(ctk.CTk):
             guidance_bar,
             text="Send Note",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            fg_color="#0284C7",
-            hover_color="#0369A1",
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            text_color="#FFFFFF",
             width=95,
             height=32,
             command=self.send_guidance
@@ -809,27 +865,24 @@ class CEOAdminApp(ctk.CTk):
 
         # Reset all navigation tabs to inactive state
         for btn in [self.nav_btn_stream, self.nav_btn_files, self.nav_btn_cs, self.nav_btn_gps]:
-            btn.configure(fg_color="transparent", hover_color="#1E293B", text_color="#94A3B8")
+            btn.configure(fg_color="transparent", hover_color="#E2E8F0", text_color="#64748B", border_width=0)
 
         if target == "stream":
             self.stream_view_frame.pack(fill="both", expand=True)
-            self.nav_btn_stream.configure(fg_color="#2563EB", hover_color="#1D4ED8", text_color="#F8FAFC")
+            self.nav_btn_stream.configure(fg_color="#FFFFFF", hover_color="#F8FAFC", text_color="#2563EB", border_color="#CBD5E1", border_width=1)
         elif target == "files":
             self.file_view_frame.pack(fill="both", expand=True)
-            self.nav_btn_files.configure(fg_color="#059669", hover_color="#047857", text_color="#F8FAFC")
+            self.nav_btn_files.configure(fg_color="#FFFFFF", hover_color="#F8FAFC", text_color="#059669", border_color="#CBD5E1", border_width=1)
             if not self.worker_current_path and self.selected_worker_id:
                 self.request_browse_folder("DEFAULT")
         elif target == "cs_logs":
             self.cs_logs_view_frame.pack(fill="both", expand=True)
-            self.nav_btn_cs.configure(fg_color="#7C3AED", hover_color="#6D28D9", text_color="#F8FAFC")
+            self.nav_btn_cs.configure(fg_color="#FFFFFF", hover_color="#F8FAFC", text_color="#7C3AED", border_color="#CBD5E1", border_width=1)
             self.fetch_cs_logs()
         elif target == "gps":
             self.gps_view_frame.pack(fill="both", expand=True)
-            self.nav_btn_gps.configure(fg_color="#0284C7", hover_color="#0369A1", text_color="#F8FAFC")
+            self.nav_btn_gps.configure(fg_color="#FFFFFF", hover_color="#F8FAFC", text_color="#0284C7", border_color="#CBD5E1", border_width=1)
             self.last_gps_signature = None  # Force fresh render on tab switch
-            self.render_gps_locations()
-            self.gps_view_frame.pack(fill="both", expand=True)
-            self.gps_toggle_btn.configure(text="📺 Live Screen", fg_color="#F59E0B", hover_color="#D97706")
             self.render_gps_locations()
 
     def fetch_cs_logs(self):
@@ -876,7 +929,7 @@ class CEOAdminApp(ctk.CTk):
             status = log.get("status", "completed").capitalize()
             notes = log.get("notes", "")
 
-            card = ctk.CTkFrame(self.cs_logs_scroll, fg_color="#1E293B", corner_radius=6)
+            card = ctk.CTkFrame(self.cs_logs_scroll, fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1, corner_radius=8)
             card.pack(fill="x", pady=3, padx=4)
 
             # Top row inside card
@@ -886,10 +939,10 @@ class CEOAdminApp(ctk.CTk):
             badge = ctk.CTkLabel(
                 top_row,
                 text=f"📞 {direction}",
-                fg_color="#065F46" if direction == "INCOMING" else "#1E3A8A",
+                fg_color="#ECFDF5" if direction == "INCOMING" else "#EFF6FF",
                 corner_radius=4,
                 font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
-                text_color="#A7F3D0" if direction == "INCOMING" else "#BFDBFE",
+                text_color="#059669" if direction == "INCOMING" else "#2563EB",
                 padx=6, pady=2
             )
             badge.pack(side="left", padx=(0, 8))
@@ -898,17 +951,17 @@ class CEOAdminApp(ctk.CTk):
                 top_row,
                 text=f"{customer_name} ({phone})",
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                text_color="#F8FAFC"
+                text_color="#0F172A"
             )
             name_lbl.pack(side="left", padx=4)
 
             status_badge = ctk.CTkLabel(
                 top_row,
                 text=status,
-                fg_color="#334155",
+                fg_color="#F1F5F9",
                 corner_radius=4,
-                font=ctk.CTkFont(size=10),
-                text_color="#38BDF8",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color="#2563EB",
                 padx=6, pady=1
             )
             status_badge.pack(side="left", padx=8)
@@ -917,7 +970,7 @@ class CEOAdminApp(ctk.CTk):
                 top_row,
                 text=f"🕒 {time_str}  •  📱 {worker_name}",
                 font=ctk.CTkFont(size=11),
-                text_color="#94A3B8"
+                text_color="#64748B"
             )
             time_lbl.pack(side="right", padx=6)
 
@@ -927,7 +980,7 @@ class CEOAdminApp(ctk.CTk):
                     card,
                     text=f"📝 {notes}",
                     font=ctk.CTkFont(size=11),
-                    text_color="#CBD5E1",
+                    text_color="#475569",
                     anchor="w",
                     justify="left"
                 )
@@ -1043,7 +1096,7 @@ class CEOAdminApp(ctk.CTk):
 
             loc = w.get("location")
 
-            card = ctk.CTkFrame(self.gps_scroll, fg_color="#1E293B", corner_radius=8)
+            card = ctk.CTkFrame(self.gps_scroll, fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1, corner_radius=8)
             card.pack(fill="x", pady=4, padx=4)
 
             # Left side: Worker info
@@ -1054,7 +1107,7 @@ class CEOAdminApp(ctk.CTk):
                 info_frame,
                 text=f"{device_icon}  {name}  [{dept}]",
                 font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-                text_color="#F8FAFC"
+                text_color="#0F172A"
             )
             title_lbl.pack(anchor="w")
 
@@ -1062,7 +1115,7 @@ class CEOAdminApp(ctk.CTk):
                 info_frame,
                 text=f"{device_type} • {hostname}",
                 font=ctk.CTkFont(size=11),
-                text_color="#94A3B8"
+                text_color="#64748B"
             )
             sub_lbl.pack(anchor="w", pady=(2, 0))
 
@@ -1082,7 +1135,7 @@ class CEOAdminApp(ctk.CTk):
                     center_frame,
                     text=f"📍 Lat: {lat:.6f},  Lon: {lon:.6f}",
                     font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-                    text_color="#38BDF8"
+                    text_color="#2563EB"
                 )
                 coords_lbl.pack(anchor="w")
 
@@ -1090,8 +1143,8 @@ class CEOAdminApp(ctk.CTk):
                 detail_lbl = ctk.CTkLabel(
                     center_frame,
                     text=f"📡 Source: {provider.upper()}  •  {acc_str}  •  Updated: {time_str}",
-                    font=ctk.CTkFont(size=11),
-                    text_color="#22C55E"
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    text_color="#10B981"
                 )
                 detail_lbl.pack(anchor="w", pady=(2, 0))
 
@@ -1103,8 +1156,9 @@ class CEOAdminApp(ctk.CTk):
                 map_btn = ctk.CTkButton(
                     btn_frame,
                     text="🗺️ Open in Google Maps",
-                    fg_color="#0284C7",
-                    hover_color="#0369A1",
+                    fg_color="#2563EB",
+                    hover_color="#1D4ED8",
+                    text_color="#FFFFFF",
                     width=165,
                     command=lambda u=maps_url: webbrowser.open(u)
                 )
@@ -1113,8 +1167,11 @@ class CEOAdminApp(ctk.CTk):
                 copy_btn = ctk.CTkButton(
                     btn_frame,
                     text="📋 Copy Coordinates",
-                    fg_color="#334155",
-                    hover_color="#475569",
+                    fg_color="#F1F5F9",
+                    hover_color="#E2E8F0",
+                    text_color="#334155",
+                    border_color="#CBD5E1",
+                    border_width=1,
                     width=165,
                     command=lambda c=f"{lat},{lon}": self.copy_to_clipboard(c)
                 )
@@ -1238,14 +1295,14 @@ class CEOAdminApp(ctk.CTk):
                 continue
 
             is_selected = (w_id == self.selected_worker_id)
-            bg_color = "#1E293B" if not is_selected else "#1E3A5F"
-            border_color = "#3B82F6" if is_selected else "#334155"
+            bg_color = "#FFFFFF" if not is_selected else "#EFF6FF"
+            border_color = "#3B82F6" if is_selected else "#E2E8F0"
 
             card = ctk.CTkFrame(
                 self.workers_list_frame,
                 fg_color=bg_color,
                 border_color=border_color,
-                border_width=1 if is_selected else 0,
+                border_width=1,
                 corner_radius=8,
                 cursor="hand2"
             )
@@ -1271,7 +1328,7 @@ class CEOAdminApp(ctk.CTk):
                 row1,
                 text=name,
                 font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-                text_color="#F8FAFC"
+                text_color="#0F172A"
             )
             name_lbl.pack(side="left")
             name_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
@@ -1303,7 +1360,7 @@ class CEOAdminApp(ctk.CTk):
                 row2,
                 text=f"{platform_tag} • {dept} • {hostname}",
                 font=ctk.CTkFont(family="Segoe UI", size=10),
-                text_color="#94A3B8"
+                text_color="#64748B"
             )
             meta_lbl.pack(side="left")
             meta_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
@@ -1603,12 +1660,12 @@ class CEOAdminApp(ctk.CTk):
         # Reset colors of other rows
         for child in self.files_scroll.winfo_children():
             try:
-                child.configure(fg_color="#1E293B", border_width=0)
+                child.configure(fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1)
             except Exception:
                 pass
         # Highlight selected row
         try:
-            row_widget.configure(fg_color="#1E3A5F", border_color="#3B82F6", border_width=1)
+            row_widget.configure(fg_color="#EFF6FF", border_color="#3B82F6", border_width=1)
         except Exception:
             pass
 
@@ -1934,7 +1991,7 @@ class CEOAdminApp(ctk.CTk):
 
         if op == "cut":
             self.file_clipboard = None
-            self.paste_btn.configure(state="disabled", text="📌 Paste", fg_color="#1E293B")
+            self.paste_btn.configure(state="disabled", text="📌 Paste", fg_color="#F1F5F9", text_color="#334155")
 
     def browse_recycle_bin(self):
         """Navigates to the Windows Recycle Bin view on the worker PC"""
@@ -2034,7 +2091,7 @@ class CEOAdminApp(ctk.CTk):
                 else: icon = "📄"
                 size_str = f"{size_bytes / 1024:.1f} KB" if size_bytes > 0 else "0 KB"
 
-            row = ctk.CTkFrame(self.files_scroll, fg_color="#1E293B", corner_radius=6, cursor="hand2")
+            row = ctk.CTkFrame(self.files_scroll, fg_color="#FFFFFF", border_color="#E2E8F0", border_width=1, corner_radius=6, cursor="hand2")
             row.pack(fill="x", pady=2, padx=4)
 
             # Left side: Icon + Name
@@ -2043,7 +2100,7 @@ class CEOAdminApp(ctk.CTk):
                 row,
                 text=btn_text,
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold" if is_dir else "normal"),
-                text_color="#F8FAFC" if is_dir else "#CBD5E1"
+                text_color="#0F172A" if is_dir else "#334155"
             )
             lbl.pack(side="left", padx=10, pady=6)
 
@@ -2052,9 +2109,11 @@ class CEOAdminApp(ctk.CTk):
                 row,
                 text="🗑️",
                 font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                fg_color="#7F1D1D",
-                hover_color="#991B1B",
-                text_color="#FECACA",
+                fg_color="#FEE2E2",
+                hover_color="#FECACA",
+                text_color="#DC2626",
+                border_color="#FCA5A5",
+                border_width=1,
                 width=36,
                 height=26,
                 corner_radius=4,
@@ -2067,9 +2126,11 @@ class CEOAdminApp(ctk.CTk):
                     row,
                     text="✂️",
                     font=ctk.CTkFont(family="Segoe UI", size=11),
-                    fg_color="#334155",
-                    hover_color="#475569",
-                    text_color="#F8FAFC",
+                    fg_color="#F1F5F9",
+                    hover_color="#E2E8F0",
+                    text_color="#475569",
+                    border_color="#CBD5E1",
+                    border_width=1,
                     width=34,
                     height=26,
                     corner_radius=4,
@@ -2081,9 +2142,11 @@ class CEOAdminApp(ctk.CTk):
                     row,
                     text="📋",
                     font=ctk.CTkFont(family="Segoe UI", size=11),
-                    fg_color="#334155",
-                    hover_color="#475569",
-                    text_color="#F8FAFC",
+                    fg_color="#F1F5F9",
+                    hover_color="#E2E8F0",
+                    text_color="#475569",
+                    border_color="#CBD5E1",
+                    border_width=1,
                     width=34,
                     height=26,
                     corner_radius=4,
@@ -2096,9 +2159,11 @@ class CEOAdminApp(ctk.CTk):
                         row,
                         text="📂 Open",
                         font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                        fg_color="#1E3A8A",
-                        hover_color="#1D4ED8",
-                        text_color="#BFDBFE",
+                        fg_color="#EFF6FF",
+                        hover_color="#DBEAFE",
+                        text_color="#2563EB",
+                        border_color="#93C5FD",
+                        border_width=1,
                         width=66,
                         height=26,
                         corner_radius=4,
@@ -2109,9 +2174,11 @@ class CEOAdminApp(ctk.CTk):
                         row,
                         text="👁️ View",
                         font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                        fg_color="#065F46",
-                        hover_color="#059669",
-                        text_color="#A7F3D0",
+                        fg_color="#ECFDF5",
+                        hover_color="#D1FAE5",
+                        text_color="#059669",
+                        border_color="#6EE7B7",
+                        border_width=1,
                         width=66,
                         height=26,
                         corner_radius=4,

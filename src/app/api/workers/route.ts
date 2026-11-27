@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getActiveWorkers, clearStaleWorkers } from "@/lib/store";
 
 export async function GET() {
-  const workers = getActiveWorkers(7000);
+  const workers = getActiveWorkers(16000);
 
   return NextResponse.json({
     ok: true,

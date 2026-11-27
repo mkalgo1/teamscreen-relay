@@ -59,12 +59,17 @@ class CEOAdminApp(ctk.CTk):
         self.last_fps_time = time.time()
         self.current_fps = 0
 
-        # Anti-Flicker Live Refresh Signatures
+        # Anti-Flicker Live Refresh Signatures & Stability Cache
         self.last_workers_signature = None
         self.last_gps_signature = None
         self.last_frame_timestamp = 0
         self.pending_render_data = None
         self.is_render_scheduled = False
+        self.worker_cards = {}  # wid -> dict of widgets
+        self.worker_empty_label = None
+        self.worker_grace_cache = {}  # wid -> {"data": dict, "last_seen": float}
+        self.folder_cache = {}  # path -> (items, timestamp)
+        self.rapid_poll_until = 0
 
         # Video Recording State
         self.is_recording = False
@@ -507,20 +512,75 @@ class CEOAdminApp(ctk.CTk):
         go_btn = ctk.CTkButton(fm_nav_top, text="Go", width=50, fg_color="#2563EB", hover_color="#1D4ED8", text_color="#FFFFFF", command=lambda: self.request_browse_folder(self.fm_path_entry.get().strip()))
         go_btn.pack(side="left", padx=3)
 
-        # Quick Jump Buttons
-        desktop_btn = ctk.CTkButton(fm_nav_top, text="Desktop", width=70, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("DESKTOP"))
-        desktop_btn.pack(side="left", padx=2)
+        # Quick Jump Buttons & Shortcuts
+        this_pc_btn = ctk.CTkButton(
+            fm_nav_top,
+            text="🖥️ This PC",
+            width=85,
+            fg_color="#EFF6FF",
+            hover_color="#DBEAFE",
+            text_color="#2563EB",
+            border_color="#BFDBFE",
+            border_width=1,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            command=lambda: self.request_browse_folder("THIS_PC")
+        )
+        this_pc_btn.pack(side="left", padx=2)
 
-        docs_btn = ctk.CTkButton(fm_nav_top, text="Documents", width=80, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("DOCUMENTS"))
+        docs_btn = ctk.CTkButton(
+            fm_nav_top,
+            text="📁 Documents",
+            width=92,
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            command=lambda: self.request_browse_folder("DOCUMENTS")
+        )
         docs_btn.pack(side="left", padx=2)
 
-        downloads_btn = ctk.CTkButton(fm_nav_top, text="Downloads", width=80, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("DOWNLOADS"))
+        downloads_btn = ctk.CTkButton(
+            fm_nav_top,
+            text="⬇️ Downloads",
+            width=92,
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            command=lambda: self.request_browse_folder("DOWNLOADS")
+        )
         downloads_btn.pack(side="left", padx=2)
 
-        c_drive_btn = ctk.CTkButton(fm_nav_top, text="C:\\", width=45, fg_color="#F1F5F9", hover_color="#E2E8F0", text_color="#334155", border_color="#CBD5E1", border_width=1, command=lambda: self.request_browse_folder("C:\\"))
-        c_drive_btn.pack(side="left", padx=2)
+        desktop_btn = ctk.CTkButton(
+            fm_nav_top,
+            text="🖥️ Desktop",
+            width=80,
+            fg_color="#F1F5F9",
+            hover_color="#E2E8F0",
+            text_color="#334155",
+            border_color="#CBD5E1",
+            border_width=1,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            command=lambda: self.request_browse_folder("DESKTOP")
+        )
+        desktop_btn.pack(side="left", padx=2)
 
-        trash_jump_btn = ctk.CTkButton(fm_nav_top, text="🗑️ Recycle Bin", width=105, fg_color="#FFF1F2", hover_color="#FFE4E6", text_color="#BE123C", border_color="#FECDD3", border_width=1, command=self.browse_recycle_bin)
+        trash_jump_btn = ctk.CTkButton(
+            fm_nav_top,
+            text="🗑️ Recycle Bin",
+            width=105,
+            fg_color="#FFF1F2",
+            hover_color="#FFE4E6",
+            text_color="#BE123C",
+            border_color="#FECDD3",
+            border_width=1,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            command=self.browse_recycle_bin
+        )
         trash_jump_btn.pack(side="left", padx=(2, 6))
 
         # File Action Toolbar (Upload, Download/Open, Launch on Worker, Copy, Cut, Paste, Delete, Trash)
@@ -1026,6 +1086,13 @@ class CEOAdminApp(ctk.CTk):
             self.workers = []
             self.last_workers_signature = None
             self.last_gps_signature = None
+            self.worker_grace_cache.clear()
+            for wid, card_data in list(self.worker_cards.items()):
+                try:
+                    card_data["card"].destroy()
+                except Exception:
+                    pass
+            self.worker_cards.clear()
             self.update_workers_list([])
             self.online_count_badge.configure(text="0 online")
         except Exception:
@@ -1212,9 +1279,28 @@ class CEOAdminApp(ctk.CTk):
                     self.after(0, self.update_workers_list, workers)
             except Exception:
                 pass
-            time.sleep(2.0)
+            time.sleep(1.5)
 
     def update_workers_list(self, workers):
+        now = time.time()
+
+        # 0. Client-Side Grace Period (Prevents worker from disappearing on 1-2s network hiccups)
+        for w in workers:
+            wid = w.get("workerId")
+            if wid:
+                self.worker_grace_cache[wid] = {"data": w, "last_seen": now}
+
+        # Merge active workers with workers currently within grace period (12 seconds)
+        merged_workers_map = {w.get("workerId"): w for w in workers if w.get("workerId")}
+        for wid, info in list(self.worker_grace_cache.items()):
+            if wid not in merged_workers_map:
+                if (now - info["last_seen"]) < 12.0:
+                    merged_workers_map[wid] = info["data"]
+                else:
+                    del self.worker_grace_cache[wid]
+
+        workers = list(merged_workers_map.values())
+
         # 1. De-duplicate workers: Ensure each physical device is displayed exactly ONCE
         unique_workers = []
         seen = set()
@@ -1230,48 +1316,51 @@ class CEOAdminApp(ctk.CTk):
 
         search_query = self.search_entry.get().strip().lower()
 
-        # Anti-Flicker: Compute current state signature
-        current_sig = (
-            tuple(
-                (
-                    w.get("workerId"),
-                    w.get("name"),
-                    w.get("status"),
-                    w.get("department"),
-                    w.get("hostname"),
-                    bool(w.get("location")),
-                    w.get("workerId") == self.selected_worker_id
-                )
-                for w in workers
-            ),
-            search_query,
-            len(workers)
-        )
+        # Filter workers matching search
+        visible_workers = []
+        for w in workers:
+            name = w.get("name", "Unknown Worker")
+            dept = w.get("department", "Operations")
+            hostname = w.get("hostname", "")
+            if search_query and (search_query not in name.lower() and search_query not in dept.lower() and search_query not in hostname.lower()):
+                continue
+            visible_workers.append(w)
 
-        # If data hasn't visually changed, DO NOT destroy or rebuild widgets (eliminates UI blinking!)
-        if current_sig == self.last_workers_signature:
+        # Handle empty state
+        if not visible_workers:
+            if not self.worker_empty_label:
+                self.worker_empty_label = ctk.CTkLabel(
+                    self.workers_list_frame,
+                    text="Waiting for workers to connect...\n• Windows: Run WorkerRelay.exe\n• Phone: Open TeamScreenSupport.apk",
+                    font=ctk.CTkFont(size=12),
+                    text_color="#64748B",
+                    justify="center"
+                )
+                self.worker_empty_label.pack(pady=40)
+            # Remove any lingering cards
+            for wid, card_data in list(self.worker_cards.items()):
+                try:
+                    card_data["card"].destroy()
+                except Exception:
+                    pass
+                del self.worker_cards[wid]
             if self.active_view == "gps":
                 self.render_gps_locations()
             return
 
-        self.last_workers_signature = current_sig
+        # If we have visible workers, destroy empty label if present
+        if self.worker_empty_label:
+            try:
+                self.worker_empty_label.destroy()
+            except Exception:
+                pass
+            self.worker_empty_label = None
 
-        for widget in self.workers_list_frame.winfo_children():
-            widget.destroy()
+        visible_ids = set()
 
-        if not workers:
-            empty_lbl = ctk.CTkLabel(
-                self.workers_list_frame,
-                text="Waiting for workers to connect...\n• Windows: Run WorkerRelay.exe\n• Phone: Open TeamScreenSupport.apk",
-                font=ctk.CTkFont(size=12),
-                text_color="#64748B",
-                justify="center"
-            )
-            empty_lbl.pack(pady=40)
-            return
-
-        for w in workers:
+        for w in visible_workers:
             w_id = w.get("workerId", "")
+            visible_ids.add(w_id)
             name = w.get("name", "Unknown Worker")
             dept = w.get("department", "Operations")
             hostname = w.get("hostname", "")
@@ -1291,79 +1380,126 @@ class CEOAdminApp(ctk.CTk):
                 "xiaomi" in hostname.lower()
             )
 
-            if search_query and (search_query not in name.lower() and search_query not in dept.lower() and search_query not in hostname.lower()):
-                continue
-
             is_selected = (w_id == self.selected_worker_id)
             bg_color = "#FFFFFF" if not is_selected else "#EFF6FF"
             border_color = "#3B82F6" if is_selected else "#E2E8F0"
-
-            card = ctk.CTkFrame(
-                self.workers_list_frame,
-                fg_color=bg_color,
-                border_color=border_color,
-                border_width=1,
-                corner_radius=8,
-                cursor="hand2"
-            )
-            card.pack(fill="x", pady=4)
-            card.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
-
-            row1 = ctk.CTkFrame(card, fg_color="transparent")
-            row1.pack(fill="x", padx=10, pady=(8, 2))
-            row1.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
-
-            # Left side: Device Logo (🪟 Windows vs 📱 Phone)
-            device_logo = "📱" if is_phone else "🪟"
-            logo_lbl = ctk.CTkLabel(row1, text=device_logo, font=ctk.CTkFont(size=14))
-            logo_lbl.pack(side="left", padx=(0, 4))
-            logo_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
-
             dot_color = "#3B82F6" if status == "streaming" else "#10B981"
-            dot = ctk.CTkLabel(row1, text="●", text_color=dot_color, font=ctk.CTkFont(size=12))
-            dot.pack(side="left", padx=(0, 6))
-            dot.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
-
-            name_lbl = ctk.CTkLabel(
-                row1,
-                text=name,
-                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-                text_color="#0F172A"
-            )
-            name_lbl.pack(side="left")
-            name_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
-
             badge_text = "STREAMING" if status == "streaming" else "ONLINE"
-            badge = ctk.CTkLabel(
-                row1,
-                text=badge_text,
-                font=ctk.CTkFont(size=9, weight="bold"),
-                text_color=dot_color
-            )
-            badge.pack(side="right")
-
-            if w.get("location"):
-                loc_badge = ctk.CTkLabel(
-                    row1,
-                    text="📍 GPS",
-                    font=ctk.CTkFont(size=9, weight="bold"),
-                    text_color="#38BDF8"
-                )
-                loc_badge.pack(side="right", padx=(0, 5))
-
-            row2 = ctk.CTkFrame(card, fg_color="transparent")
-            row2.pack(fill="x", padx=10, pady=(0, 8))
-            row2.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
-
+            device_logo = "📱" if is_phone else "🪟"
             platform_tag = "📱 Android" if is_phone else "🪟 Windows"
-            meta_lbl = ctk.CTkLabel(
-                row2,
-                text=f"{platform_tag} • {dept} • {hostname}",
-                font=ctk.CTkFont(family="Segoe UI", size=10),
-                text_color="#64748B"
-            )
-            meta_lbl.pack(side="left")
-            meta_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+            meta_text = f"{platform_tag} • {dept} • {hostname}"
+            has_gps = bool(w.get("location"))
+
+            if w_id in self.worker_cards:
+                # IN-PLACE UPDATE: Update properties without destroying widgets (ZERO BLINK!)
+                card_data = self.worker_cards[w_id]
+                try:
+                    card_data["card"].configure(fg_color=bg_color, border_color=border_color, border_width=1)
+                    card_data["name_lbl"].configure(text=name)
+                    card_data["dot"].configure(text_color=dot_color)
+                    card_data["badge"].configure(text=badge_text, text_color=dot_color)
+                    card_data["meta_lbl"].configure(text=meta_text)
+                    card_data["logo_lbl"].configure(text=device_logo)
+                    
+                    if has_gps and not card_data.get("loc_badge"):
+                        loc_badge = ctk.CTkLabel(
+                            card_data["row1"],
+                            text="📍 GPS",
+                            font=ctk.CTkFont(size=9, weight="bold"),
+                            text_color="#38BDF8"
+                        )
+                        loc_badge.pack(side="right", padx=(0, 5))
+                        card_data["loc_badge"] = loc_badge
+                    elif not has_gps and card_data.get("loc_badge"):
+                        card_data["loc_badge"].destroy()
+                        card_data["loc_badge"] = None
+                except Exception:
+                    pass
+            else:
+                # CREATE NEW CARD
+                card = ctk.CTkFrame(
+                    self.workers_list_frame,
+                    fg_color=bg_color,
+                    border_color=border_color,
+                    border_width=1,
+                    corner_radius=8,
+                    cursor="hand2"
+                )
+                card.pack(fill="x", pady=4)
+                card.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                row1 = ctk.CTkFrame(card, fg_color="transparent")
+                row1.pack(fill="x", padx=10, pady=(8, 2))
+                row1.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                logo_lbl = ctk.CTkLabel(row1, text=device_logo, font=ctk.CTkFont(size=14))
+                logo_lbl.pack(side="left", padx=(0, 4))
+                logo_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                dot = ctk.CTkLabel(row1, text="●", text_color=dot_color, font=ctk.CTkFont(size=12))
+                dot.pack(side="left", padx=(0, 6))
+                dot.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                name_lbl = ctk.CTkLabel(
+                    row1,
+                    text=name,
+                    font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                    text_color="#0F172A"
+                )
+                name_lbl.pack(side="left")
+                name_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                badge = ctk.CTkLabel(
+                    row1,
+                    text=badge_text,
+                    font=ctk.CTkFont(size=9, weight="bold"),
+                    text_color=dot_color
+                )
+                badge.pack(side="right")
+
+                loc_badge = None
+                if has_gps:
+                    loc_badge = ctk.CTkLabel(
+                        row1,
+                        text="📍 GPS",
+                        font=ctk.CTkFont(size=9, weight="bold"),
+                        text_color="#38BDF8"
+                    )
+                    loc_badge.pack(side="right", padx=(0, 5))
+
+                row2 = ctk.CTkFrame(card, fg_color="transparent")
+                row2.pack(fill="x", padx=10, pady=(0, 8))
+                row2.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                meta_lbl = ctk.CTkLabel(
+                    row2,
+                    text=meta_text,
+                    font=ctk.CTkFont(family="Segoe UI", size=10),
+                    text_color="#64748B"
+                )
+                meta_lbl.pack(side="left")
+                meta_lbl.bind("<Button-1>", lambda e, wid=w_id: self.select_worker(wid))
+
+                self.worker_cards[w_id] = {
+                    "card": card,
+                    "row1": row1,
+                    "row2": row2,
+                    "logo_lbl": logo_lbl,
+                    "dot": dot,
+                    "name_lbl": name_lbl,
+                    "badge": badge,
+                    "loc_badge": loc_badge,
+                    "meta_lbl": meta_lbl
+                }
+
+        # Remove cards of workers that are no longer visible or expired
+        for wid in list(self.worker_cards.keys()):
+            if wid not in visible_ids:
+                try:
+                    self.worker_cards[wid]["card"].destroy()
+                except Exception:
+                    pass
+                del self.worker_cards[wid]
 
         if self.active_view == "gps":
             self.render_gps_locations()
@@ -1632,7 +1768,18 @@ class CEOAdminApp(ctk.CTk):
     def request_browse_folder(self, folder_path):
         if not self.selected_worker_id:
             return
-        self.fm_status_lbl.configure(text="Reading folder...", text_color="#38BDF8")
+        if not folder_path:
+            folder_path = "THIS_PC"
+
+        # Check instant session cache for zero-lag responsiveness
+        if folder_path in self.folder_cache:
+            cached_items, _ = self.folder_cache[folder_path]
+            self.update_files_ui(folder_path, cached_items, status_msg=f"Cache ({len(cached_items)} items)... syncing live")
+        else:
+            self.fm_status_lbl.configure(text=f"Loading '{folder_path}'...", text_color="#38BDF8")
+
+        # Trigger high-frequency polling burst (100ms) for fast loading
+        self.rapid_poll_until = time.time() + 2.5
         payload = {
             "workerId": self.selected_worker_id,
             "action": "list",
@@ -1641,19 +1788,26 @@ class CEOAdminApp(ctk.CTk):
         threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
 
     def refresh_current_folder(self):
-        curr = self.fm_path_entry.get().strip() or self.worker_current_path or "DESKTOP"
+        curr = self.fm_path_entry.get().strip() or self.worker_current_path or "THIS_PC"
+        if curr in self.folder_cache:
+            del self.folder_cache[curr]
         self.request_browse_folder(curr)
 
     def navigate_up_folder(self):
         curr = self.worker_current_path
-        if curr:
-            parent = os.path.dirname(curr)
-            if parent and parent != curr:
-                self.request_browse_folder(parent)
-            elif curr.endswith(":\\") or curr.endswith(":/"):
-                pass
-            else:
-                self.request_browse_folder(parent)
+        if curr in ("THIS_PC", "MY_COMPUTER"):
+            return
+        if not curr or curr == "RECYCLE_BIN":
+            self.request_browse_folder("THIS_PC")
+            return
+        if curr.endswith(":\\") or curr.endswith(":/") or len(curr) <= 3:
+            self.request_browse_folder("THIS_PC")
+            return
+        parent = os.path.dirname(curr)
+        if parent and parent != curr:
+            self.request_browse_folder(parent)
+        else:
+            self.request_browse_folder("THIS_PC")
 
     def select_file_item(self, item_info, row_widget):
         self.selected_file_item = item_info
@@ -1671,9 +1825,12 @@ class CEOAdminApp(ctk.CTk):
 
         name = item_info.get("name", "")
         is_dir = item_info.get("isDir", False)
+        is_drive = item_info.get("isDrive", False)
         size_kb = item_info.get("size", 0) / 1024.0
 
-        if is_dir:
+        if is_drive:
+            self.fm_status_lbl.configure(text=f"Selected Drive: {name} ({item_info.get('sizeStr', '')})", text_color="#93C5FD")
+        elif is_dir:
             self.fm_status_lbl.configure(text=f"Selected Folder: {name}", text_color="#93C5FD")
         else:
             self.fm_status_lbl.configure(text=f"Selected File: {name} ({size_kb:.1f} KB)", text_color="#86EFAC")
@@ -1681,6 +1838,13 @@ class CEOAdminApp(ctk.CTk):
     def on_item_double_click(self, item_info):
         name = item_info.get("name")
         is_dir = item_info.get("isDir", False)
+        is_drive = item_info.get("isDrive", False)
+        drive_path = item_info.get("path")
+
+        if is_drive or (drive_path and self.worker_current_path in ("THIS_PC", "MY_COMPUTER")):
+            self.request_browse_folder(drive_path)
+            return
+
         target_path = os.path.join(self.worker_current_path, name)
 
         if is_dir:
@@ -1833,12 +1997,12 @@ class CEOAdminApp(ctk.CTk):
         threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
 
     def file_result_poll_loop(self):
-        """High-frequency poller for directory listings, downloads, and operation confirmations"""
+        """High-frequency adaptive poller for directory listings, downloads, and confirmations"""
         while not self.stop_event.is_set():
             if self.selected_worker_id:
                 try:
                     url = f"{self.relay_url}/api/files/result?workerId={self.selected_worker_id}"
-                    resp = self.http_session.get(url, timeout=2.5)
+                    resp = self.http_session.get(url, timeout=2.0)
                     if resp.status_code == 200:
                         data = resp.json()
                         if data.get("ok"):
@@ -1857,13 +2021,17 @@ class CEOAdminApp(ctk.CTk):
                                 # Check if a downloaded file arrived
                                 if action == "download" and file_data and file_name:
                                     self.after(0, self.handle_received_file_download, file_name, file_data)
-                                elif action in ("list", "upload", "delete", "mkdir", "copy", "move", "list_trash", "empty_trash") or items:
+                                elif action in ("list", "upload", "delete", "mkdir", "copy", "move", "list_trash", "empty_trash", "restore_trash", "delete_trash_item") or items:
+                                    if cur_path:
+                                        self.folder_cache[cur_path] = (items, ts)
                                     self.after(0, self.update_files_ui, cur_path, items, status_msg)
                                 elif status_msg:
                                     self.after(0, lambda m=status_msg: self.fm_status_lbl.configure(text=m))
                 except Exception:
                     pass
-            time.sleep(0.8)
+            # Adaptive rapid-burst sleep: 0.1s during active operations, 0.25s during idle
+            poll_delay = 0.1 if time.time() < self.rapid_poll_until else 0.25
+            time.sleep(poll_delay)
 
     def handle_received_file_download(self, file_name, b64_data):
         try:
@@ -1900,10 +2068,15 @@ class CEOAdminApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Download Error", f"Failed to save file: {e}")
 
-    def open_folder_direct(self, folder_name):
-        """Navigates into clicked folder on worker's PC"""
-        full_path = os.path.join(self.worker_current_path, folder_name)
-        self.request_browse_folder(full_path)
+    def open_folder_direct(self, folder_name, explicit_path=None):
+        """Navigates into clicked folder or drive on worker's PC"""
+        if explicit_path:
+            self.request_browse_folder(explicit_path)
+        elif self.worker_current_path in ("THIS_PC", "MY_COMPUTER"):
+            self.request_browse_folder(folder_name)
+        else:
+            full_path = os.path.join(self.worker_current_path, folder_name)
+            self.request_browse_folder(full_path)
 
     def download_and_view_direct(self, file_name):
         """Downloads file and opens it in default viewer on CEO PC"""
@@ -1999,6 +2172,11 @@ class CEOAdminApp(ctk.CTk):
             messagebox.showinfo("Select Worker", "Please select an active worker first.")
             return
 
+        if "RECYCLE_BIN" in self.folder_cache:
+            cached_items, _ = self.folder_cache["RECYCLE_BIN"]
+            self.update_files_ui("RECYCLE_BIN", cached_items, status_msg=f"Recycle Bin ({len(cached_items)} items)... verifying")
+
+        self.rapid_poll_until = time.time() + 2.5
         payload = {
             "workerId": self.selected_worker_id,
             "action": "list_trash"
@@ -2021,13 +2199,54 @@ class CEOAdminApp(ctk.CTk):
                 "workerId": self.selected_worker_id,
                 "action": "empty_trash"
             }
+            self.rapid_poll_until = time.time() + 3.0
             self.fm_status_lbl.configure(text="Emptying worker PC Recycle Bin...", text_color="#F87171")
+            threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
+    def restore_trash_item(self, item_name):
+        """Restores a selected file or folder from the worker's Recycle Bin to original location"""
+        if not self.selected_worker_id:
+            return
+        confirm = messagebox.askyesno(
+            "Restore Item",
+            f"Restore '{item_name}' back to its original location on the worker's computer?"
+        )
+        if confirm:
+            payload = {
+                "workerId": self.selected_worker_id,
+                "action": "restore_trash",
+                "fileName": item_name
+            }
+            self.rapid_poll_until = time.time() + 3.0
+            self.fm_status_lbl.configure(text=f"Restoring '{item_name}'...", text_color="#10B981")
+            threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
+
+    def delete_trash_item_permanent(self, item_name):
+        """Permanently deletes a single item from the worker's Recycle Bin"""
+        if not self.selected_worker_id:
+            return
+        confirm = messagebox.askyesno(
+            "Permanently Delete",
+            f"Are you sure you want to PERMANENTLY delete '{item_name}' from the Recycle Bin?\n\nThis cannot be undone!"
+        )
+        if confirm:
+            payload = {
+                "workerId": self.selected_worker_id,
+                "action": "delete_trash_item",
+                "fileName": item_name
+            }
+            self.rapid_poll_until = time.time() + 3.0
+            self.fm_status_lbl.configure(text=f"Permanently deleting '{item_name}'...", text_color="#EF4444")
             threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
 
     def delete_item_direct(self, name, is_dir):
         """Prompts confirmation and moves file or folder to Recycle Bin on worker's PC"""
         if not self.selected_worker_id:
             messagebox.showinfo("Select Worker", "Please select an active worker first.")
+            return
+
+        if self.worker_current_path == "RECYCLE_BIN":
+            self.delete_trash_item_permanent(name)
             return
 
         full_path = os.path.join(self.worker_current_path, name)
@@ -2043,13 +2262,19 @@ class CEOAdminApp(ctk.CTk):
                 "action": "delete",
                 "path": full_path
             }
+            self.rapid_poll_until = time.time() + 2.5
             self.fm_status_lbl.configure(text=f"Deleting '{name}' to Recycle Bin...", text_color="#F87171")
             threading.Thread(target=self._post_file_command, args=(payload,), daemon=True).start()
 
     def update_files_ui(self, current_path, items, status_msg=""):
         self.worker_current_path = current_path
         self.fm_path_entry.delete(0, "end")
-        display_path = "Recycle Bin (Trash)" if current_path == "RECYCLE_BIN" else current_path
+        if current_path == "RECYCLE_BIN":
+            display_path = "Recycle Bin (Trash)"
+        elif current_path in ("THIS_PC", "MY_COMPUTER"):
+            display_path = "This PC (Hard & Removable Disks)"
+        else:
+            display_path = current_path
         self.fm_path_entry.insert(0, display_path)
         self.selected_file_item = None
 
@@ -2062,22 +2287,34 @@ class CEOAdminApp(ctk.CTk):
             widget.destroy()
 
         if not items:
+            empty_text = "Recycle Bin is empty." if current_path == "RECYCLE_BIN" else "Folder is empty."
             empty_lbl = ctk.CTkLabel(
                 self.files_scroll,
-                text="Folder or Recycle Bin is empty.",
+                text=empty_text,
                 font=ctk.CTkFont(size=12),
                 text_color="#64748B"
             )
             empty_lbl.pack(pady=40)
             return
 
+        is_this_pc = current_path in ("THIS_PC", "MY_COMPUTER")
+        is_recycle = (current_path == "RECYCLE_BIN")
+
         for item in items:
             name = item.get("name", "")
             is_dir = item.get("isDir", False)
+            is_drive = item.get("isDrive", False) or is_this_pc
+            drive_path = item.get("path", "")
             size_bytes = item.get("size", 0)
 
-            # Choose rich icon based on extension
-            if is_dir:
+            # Choose rich icon based on drive, directory, or extension
+            if is_drive:
+                icon = item.get("icon", "💽")
+                size_str = item.get("sizeStr", "")
+            elif is_recycle:
+                icon = "🗑️"
+                size_str = f"{size_bytes / 1024:.1f} KB" if size_bytes > 0 else ""
+            elif is_dir:
                 icon = "📁"
                 size_str = "<DIR>"
             else:
@@ -2099,29 +2336,82 @@ class CEOAdminApp(ctk.CTk):
             lbl = ctk.CTkLabel(
                 row,
                 text=btn_text,
-                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold" if is_dir else "normal"),
-                text_color="#0F172A" if is_dir else "#334155"
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold" if (is_dir or is_drive) else "normal"),
+                text_color="#0F172A" if (is_dir or is_drive) else "#334155"
             )
             lbl.pack(side="left", padx=10, pady=6)
 
-            # Right side actions: [Delete] [Cut] [Copy] [View / Open] [Size]
-            del_btn = ctk.CTkButton(
-                row,
-                text="🗑️",
-                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                fg_color="#FEE2E2",
-                hover_color="#FECACA",
-                text_color="#DC2626",
-                border_color="#FCA5A5",
-                border_width=1,
-                width=36,
-                height=26,
-                corner_radius=4,
-                command=lambda nm=name, d=is_dir: self.delete_item_direct(nm, d)
-            )
-            del_btn.pack(side="right", padx=(2, 6), pady=5)
+            # Right side actions based on context
+            if is_recycle:
+                # Recycle Bin Actions: [Perm Delete] [Restore] [Size]
+                del_btn = ctk.CTkButton(
+                    row,
+                    text="🗑️ Delete",
+                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                    fg_color="#FEE2E2",
+                    hover_color="#FECACA",
+                    text_color="#DC2626",
+                    border_color="#FCA5A5",
+                    border_width=1,
+                    width=75,
+                    height=26,
+                    corner_radius=4,
+                    command=lambda nm=name: self.delete_trash_item_permanent(nm)
+                )
+                del_btn.pack(side="right", padx=(2, 6), pady=5)
 
-            if current_path != "RECYCLE_BIN":
+                restore_btn = ctk.CTkButton(
+                    row,
+                    text="♻️ Restore",
+                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                    fg_color="#ECFDF5",
+                    hover_color="#D1FAE5",
+                    text_color="#059669",
+                    border_color="#6EE7B7",
+                    border_width=1,
+                    width=85,
+                    height=26,
+                    corner_radius=4,
+                    command=lambda nm=name: self.restore_trash_item(nm)
+                )
+                restore_btn.pack(side="right", padx=2, pady=5)
+
+            elif is_drive:
+                # Drive Actions: [Open Drive] [Drive Capacity]
+                open_btn = ctk.CTkButton(
+                    row,
+                    text="📂 Open Drive",
+                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                    fg_color="#EFF6FF",
+                    hover_color="#DBEAFE",
+                    text_color="#2563EB",
+                    border_color="#93C5FD",
+                    border_width=1,
+                    width=95,
+                    height=26,
+                    corner_radius=4,
+                    command=lambda dp=drive_path: self.request_browse_folder(dp)
+                )
+                open_btn.pack(side="right", padx=(2, 6), pady=5)
+
+            else:
+                # Normal Directory Actions: [Delete] [Cut] [Copy] [View / Open] [Size]
+                del_btn = ctk.CTkButton(
+                    row,
+                    text="🗑️",
+                    font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                    fg_color="#FEE2E2",
+                    hover_color="#FECACA",
+                    text_color="#DC2626",
+                    border_color="#FCA5A5",
+                    border_width=1,
+                    width=36,
+                    height=26,
+                    corner_radius=4,
+                    command=lambda nm=name, d=is_dir: self.delete_item_direct(nm, d)
+                )
+                del_btn.pack(side="right", padx=(2, 6), pady=5)
+
                 cut_btn = ctk.CTkButton(
                     row,
                     text="✂️",
@@ -2186,12 +2476,13 @@ class CEOAdminApp(ctk.CTk):
                     )
                 view_btn.pack(side="right", padx=2, pady=5)
 
+            size_label_width = 160 if is_drive else 65
             size_lbl = ctk.CTkLabel(
                 row,
                 text=size_str,
                 font=ctk.CTkFont(size=11),
                 text_color="#64748B",
-                width=65,
+                width=size_label_width,
                 anchor="e"
             )
             size_lbl.pack(side="right", padx=(6, 8), pady=5)
@@ -2201,7 +2492,7 @@ class CEOAdminApp(ctk.CTk):
             lbl.bind("<Button-1>", lambda e, it=item, r=row: self.select_file_item(it, r))
             size_lbl.bind("<Button-1>", lambda e, it=item, r=row: self.select_file_item(it, r))
 
-            if current_path != "RECYCLE_BIN":
+            if not is_recycle:
                 row.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
                 lbl.bind("<Double-Button-1>", lambda e, it=item: self.on_item_double_click(it))
 

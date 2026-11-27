@@ -72,6 +72,8 @@ export interface FileCommand {
     | "move"
     | "list_trash"
     | "empty_trash"
+    | "restore_trash"
+    | "delete_trash_item"
     | "notepad_open"
     | "notepad_update"
     | "notepad_close"
@@ -208,7 +210,7 @@ export function updateWorkerPing(data: {
   return updated;
 }
 
-export function getActiveWorkers(timeoutMs = 8000): WorkerInfo[] {
+export function getActiveWorkers(timeoutMs = 16000): WorkerInfo[] {
   const now = Date.now();
   const list: WorkerInfo[] = [];
   const seenDevices = new Set<string>();
@@ -225,7 +227,7 @@ export function getActiveWorkers(timeoutMs = 8000): WorkerInfo[] {
         list.push(worker);
       }
     } else {
-      if (now - worker.lastPing > 12000) {
+      if (now - worker.lastPing > 35000) {
         store.workers.delete(worker.workerId);
         store.frames.delete(worker.workerId);
         store.inputs.delete(worker.workerId);
